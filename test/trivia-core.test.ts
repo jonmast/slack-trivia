@@ -9,9 +9,11 @@ import {
   getRemainingTime,
   hasExpired,
   TIMEOUT_SECS,
+  SPEED_BONUS_MAX,
   type TriviaQuestion,
   type Answer
 } from '../src/trivia-core'
+import { createMockTriviaQuestion, createMockQuestions, setupTestEnvironment } from './test-utils'
 
 // Mock fetch globally
 global.fetch = vi.fn()
@@ -72,41 +74,10 @@ describe('Utility Functions', () => {
 })
 
 describe('TriviaStore', () => {
-  const mockQuestions: TriviaQuestion[] = [
-    {
-      category: 'Test',
-      id: 'test-1',
-      correctAnswer: 'Correct Answer',
-      incorrectAnswers: ['Wrong1', 'Wrong2', 'Wrong3'],
-      question: { text: 'What is the test question?' },
-      tags: ['test'],
-      type: 'text_choice',
-      difficulty: 'easy',
-      regions: ['US'],
-      isNiche: false
-    },
-    {
-      category: 'Another',
-      id: 'test-2', 
-      correctAnswer: 'Another Correct',
-      incorrectAnswers: ['Wrong A', 'Wrong B', 'Wrong C'],
-      question: { text: 'Another test question?' },
-      tags: ['test'],
-      type: 'text_choice',
-      difficulty: 'medium',
-      regions: ['US'],
-      isNiche: false
-    }
-  ]
+  const mockQuestions = createMockQuestions()
 
   beforeEach(() => {
-    vi.clearAllMocks()
-    
-    const mockResponse = {
-      json: vi.fn().mockResolvedValue(mockQuestions)
-    }
-    
-    global.fetch = vi.fn().mockResolvedValue(mockResponse)
+    setupTestEnvironment()
   })
 
   it('should fetch questions on initialization', async () => {

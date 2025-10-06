@@ -38,6 +38,7 @@ export type QuizState = {
   currentQuestion: Question | null
   questions: Question[]
   isActive: boolean
+  maxQuestions: number
 }
 
 export type Question = {
@@ -49,6 +50,19 @@ export type Question = {
 }
 
 export const TIMEOUT_SECS = 15
+export const SPEED_BONUS_MAX = 0.2
+const TRIVIA_API_BASE_URL = "https://the-trivia-api.com/v2/questions"
+
+async function fetchTriviaQuestions(limit?: number): Promise<TriviaQuestion[]> {
+  try {
+    const url = limit ? `${TRIVIA_API_BASE_URL}?limit=${limit}` : TRIVIA_API_BASE_URL
+    const response = await fetch(url)
+    return await response.json()
+  } catch (error) {
+    console.error('Failed to fetch trivia questions:', error)
+    return []
+  }
+}
 
 export function parseTs(ts: string): Date {
   return new Date(Number(ts) * 1000)
@@ -69,25 +83,13 @@ export class TriviaStore {
   }
 
   private async fetchInitial() {
-    try {
-      const response = await fetch("https://the-trivia-api.com/v2/questions")
-      const data = await response.json()
-      this.cache = this.cache.concat(data)
-    } catch (error) {
-      console.error('Failed to fetch initial questions:', error)
-    }
+    const questions = await fetchTriviaQuestions()
+    this.cache = this.cache.concat(questions)
   }
 
   private async fetchMore() {
-    try {
-      const response = await fetch(
-        "https://the-trivia-api.com/v2/questions?limit=10",
-      )
-      const data = await response.json()
-      this.cache = this.cache.concat(data)
-    } catch (error) {
-      console.error('Failed to fetch more questions:', error)
-    }
+    const questions = await fetchTriviaQuestions(10)
+    this.cache = this.cache.concat(questions)
   }
 
   get(): TriviaQuestion {
@@ -141,18 +143,23 @@ export function hasExpired(question: Question, timeoutSeconds: number = TIMEOUT_
   return getRemainingTime(question, timeoutSeconds) <= 0
 }
 
+export function getElapsedTime(question: Question): number {
+  return (Number(new Date()) - Number(question.timestamp)) / 1000
+}
+
 export class Quiz {
   private state: QuizState
   private store: TriviaStore
 
-  constructor(store: TriviaStore) {
+  constructor(store: TriviaStore, maxQuestions: number = 10) {
     this.store = store
     this.state = {
       users: new Set(),
       userScores: new Map(),
       currentQuestion: null,
       questions: [],
-      isActive: false
+      isActive: false,
+      maxQuestions
     }
   }
 
@@ -181,10 +188,19 @@ export class Quiz {
   }
 
   nextQuestion(): Question {
+    if (this.state.questions.length >= this.state.maxQuestions) {
+      throw new Error('Quiz has reached the maximum number of questions')
+    }
+    
     const apiQuestion = this.store.get()
     const question = createQuestion(apiQuestion)
     this.state.currentQuestion = question
     this.state.questions.push(question)
+    
+    if (this.state.questions.length >= this.state.maxQuestions) {
+      this.state.isActive = false
+    }
+    
     return question
   }
 
@@ -211,7 +227,9 @@ export class Quiz {
     if (userScore) {
       userScore.totalAnswered++
       if (isCorrectAnswer(this.state.currentQuestion, answerId)) {
-        userScore.score++
+        const elapsedTime = getElapsedTime(this.state.currentQuestion)
+        const speedBonus = Math.max(0, (TIMEOUT_SECS - elapsedTime) / TIMEOUT_SECS * SPEED_BONUS_MAX)
+        userScore.score += 1 + speedBonus
       }
     }
 
@@ -244,5 +262,20 @@ export class Quiz {
 
   getLeaderboard(): UserScore[] {
     return this.getUserScores().sort((a, b) => b.score - a.score)
+  }
+
+  isComplete(): boolean {
+    return this.state.questions.length >= this.state.maxQuestions
+  }
+
+  getMaxQuestions(): number {
+    return this.state.maxQuestions
+  }
+
+  getProgress(): { current: number; total: number } {
+    return {
+      current: this.state.questions.length,
+      total: this.state.maxQuestions
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import crypto from 'node:crypto'
+import { createMockTriviaQuestion, setupTestEnvironment } from './test-utils'
 
 // Since app.ts uses CommonJS require for dotenv at the top, we need to mock it
 vi.mock('dotenv', () => ({
@@ -58,32 +59,13 @@ describe('Utility Functions', () => {
 
 describe('TriviaStore', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    
-    // Mock fetch response
-    const mockResponse = {
-      json: vi.fn().mockResolvedValue([
-        {
-          category: 'Test',
-          id: 'test-1',
-          correctAnswer: 'Correct',
-          incorrectAnswers: ['Wrong1', 'Wrong2', 'Wrong3'],
-          question: { text: 'Test question?' },
-          tags: ['test'],
-          type: 'text_choice',
-          difficulty: 'easy',
-          regions: ['US'],
-          isNiche: false
-        }
-      ])
-    }
-    
-    global.fetch = vi.fn().mockResolvedValue(mockResponse)
+    setupTestEnvironment()
   })
 
   it('should fetch questions on initialization', async () => {
     // We need to dynamically import to ensure mocks are set up
-    const { TriviaStore } = await import('../app')
+    const appModule = await import('../app')
+    const TriviaStore = (appModule as any).TriviaStore
     
     // Wait a bit for the async constructor to complete
     await new Promise(resolve => setTimeout(resolve, 10))
