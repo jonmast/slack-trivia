@@ -168,22 +168,24 @@ describe('Multiplayer functionality', () => {
     const correctAnswerId = question.correctAnswer.id
     
     // Mock the question timestamp to control timing
-    const baseTime = Date.now()
+    const baseTime = 1000000000000 // Fixed timestamp
     question.timestamp = new Date(baseTime)
     
-    // Mock Date.now for getElapsedTime calculation
-    const originalNow = Date.now
+    // Mock Date constructor for getElapsedTime calculation
+    const originalDate = global.Date
     
     // Fast answer (1 second elapsed)
-    Date.now = vi.fn(() => baseTime + 1000)
-    quiz.submitAnswer('fast-user', correctAnswerId, new Date())
+    global.Date = vi.fn(() => new originalDate(baseTime + 1000)) as any
+    global.Date.now = vi.fn(() => baseTime + 1000)
+    quiz.submitAnswer('fast-user', correctAnswerId, new originalDate())
     
     // Slow answer (14 seconds elapsed)  
-    Date.now = vi.fn(() => baseTime + 14000)
-    quiz.submitAnswer('slow-user', correctAnswerId, new Date())
+    global.Date = vi.fn(() => new originalDate(baseTime + 14000)) as any
+    global.Date.now = vi.fn(() => baseTime + 14000)
+    quiz.submitAnswer('slow-user', correctAnswerId, new originalDate())
     
-    // Restore original Date.now
-    Date.now = originalNow
+    // Restore original Date
+    global.Date = originalDate
     
     const scores = quiz.getUserScores()
     const fastUserScore = scores.find(s => s.userId === 'fast-user')
