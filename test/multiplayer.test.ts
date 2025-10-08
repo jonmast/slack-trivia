@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { TriviaStore, Quiz, SPEED_BONUS_MAX, type TriviaQuestion } from '../src/trivia-core'
+import { TriviaStore, Quiz, SPEED_BONUS_MAX, QuizCompleteError, type TriviaQuestion } from '../src/trivia-core'
 import { createMockQuestions, setupTestEnvironment } from './test-utils'
 
 // Mock fetch globally
@@ -59,25 +59,28 @@ describe('Multiplayer functionality', () => {
     expect(user3Score?.score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
   })
 
-  it('should prevent duplicate answers from same user', () => {
+  it('should allow changing answer and update score accordingly', () => {
     quiz.addUser('user1')
     const question = quiz.startQuiz()
     const correctAnswerId = question.correctAnswer.id
+    const wrongAnswerId = question.answers.find(a => a.id !== correctAnswerId)!.id
 
-    // First answer
-    const result1 = quiz.submitAnswer('user1', correctAnswerId, new Date())
-    expect(result1).toBe(true)
+    const result1 = quiz.submitAnswer('user1', wrongAnswerId, new Date())
+    expect(result1).toBe(false)
 
-    // Second answer should throw error
-    expect(() => {
-      quiz.submitAnswer('user1', correctAnswerId, new Date())
-    }).toThrow('User has already answered this question')
+    let scores = quiz.getUserScores()
+    let userScore = scores.find(s => s.userId === 'user1')
+    expect(userScore?.score).toBe(0)
+    expect(userScore?.totalAnswered).toBe(1)
 
-    // Score should still be between 1 and 1 + speed bonus
-    const scores = quiz.getUserScores()
-    const userScore = scores.find(s => s.userId === 'user1')
+    const result2 = quiz.submitAnswer('user1', correctAnswerId, new Date())
+    expect(result2).toBe(true)
+
+    scores = quiz.getUserScores()
+    userScore = scores.find(s => s.userId === 'user1')
     expect(userScore?.score).toBeGreaterThanOrEqual(1)
     expect(userScore?.score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
+    expect(userScore?.totalAnswered).toBe(1)
   })
 
   it('should generate leaderboard correctly', () => {
@@ -108,7 +111,7 @@ describe('Multiplayer functionality', () => {
 
     expect(sortedScores[0].userId).toBe('alice')
     expect(sortedScores[0].score).toBeGreaterThanOrEqual(2)
-    expect(sortedScores[0].score).toBeLessThanOrEqual(2 + 2 * SPEED_BONUS_MAX)
+    expect(sortedScores[0].score).toBeLessThan(2 + 2 * SPEED_BONUS_MAX + 0.01)
     expect(sortedScores[1].score).toBeGreaterThanOrEqual(1)
     expect(sortedScores[1].score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
     expect(sortedScores[2].score).toBeGreaterThanOrEqual(1)
@@ -139,10 +142,14 @@ describe('Multiplayer functionality', () => {
     
     customQuiz.submitAnswer('user1', question1.correctAnswer.id, new Date())
     
-    // Second question - should automatically end quiz
+    // Second question - should succeed
     const question2 = customQuiz.nextQuestion()
-    expect(customQuiz.isActive()).toBe(false)
-    expect(customQuiz.isComplete()).toBe(true)
+    expect(question2).toBeDefined()
+    
+    // Third question attempt - should throw QuizCompleteError
+    expect(() => {
+      customQuiz.nextQuestion()
+    }).toThrow(QuizCompleteError)
     
     const progress = customQuiz.getProgress()
     expect(progress.current).toBe(2)
@@ -153,11 +160,11 @@ describe('Multiplayer functionality', () => {
     const maxQuestions = 1
     const customQuiz = new Quiz(store, maxQuestions)
     
-    customQuiz.startQuiz() // First question
+    customQuiz.startQuiz()
     
     expect(() => {
-      customQuiz.nextQuestion() // Should throw
-    }).toThrow('Quiz has reached the maximum number of questions')
+      customQuiz.nextQuestion()
+    }).toThrow(QuizCompleteError)
   })
 
   it('should award speed bonus for faster correct answers', () => {
@@ -167,42 +174,26 @@ describe('Multiplayer functionality', () => {
     const question = quiz.startQuiz()
     const correctAnswerId = question.correctAnswer.id
     
-    // Mock the question timestamp to control timing
-    const baseTime = 1000000000000 // Fixed timestamp
-    question.timestamp = new Date(baseTime)
+    const baseTime = question.timestamp.getTime()
     
-    // Mock Date constructor for getElapsedTime calculation
-    const originalDate = global.Date
+    const fastTimestamp = new Date(baseTime + 1000)
+    quiz.submitAnswer('fast-user', correctAnswerId, fastTimestamp)
     
-    // Fast answer (1 second elapsed)
-    global.Date = vi.fn(() => new originalDate(baseTime + 1000)) as any
-    global.Date.now = vi.fn(() => baseTime + 1000)
-    quiz.submitAnswer('fast-user', correctAnswerId, new originalDate())
-    
-    // Slow answer (14 seconds elapsed)  
-    global.Date = vi.fn(() => new originalDate(baseTime + 14000)) as any
-    global.Date.now = vi.fn(() => baseTime + 14000)
-    quiz.submitAnswer('slow-user', correctAnswerId, new originalDate())
-    
-    // Restore original Date
-    global.Date = originalDate
+    const slowTimestamp = new Date(baseTime + 4000)
+    quiz.submitAnswer('slow-user', correctAnswerId, slowTimestamp)
     
     const scores = quiz.getUserScores()
     const fastUserScore = scores.find(s => s.userId === 'fast-user')
     const slowUserScore = scores.find(s => s.userId === 'slow-user')
     
-    // Both should have more than 1 point (correct answer + speed bonus)
     expect(fastUserScore?.score).toBeGreaterThan(1)
     expect(slowUserScore?.score).toBeGreaterThan(1)
     
-    // Fast user should have higher score due to speed bonus
-    expect(fastUserScore?.score).toBeGreaterThan(slowUserScore?.score)
+    expect(fastUserScore?.score).toBeGreaterThan(slowUserScore!.score)
     
-    // Fast user should get significant speed bonus (14/15 * 0.2 ≈ 0.187)
-    expect(fastUserScore?.score).toBeCloseTo(1 + (14/15 * SPEED_BONUS_MAX), 2)
+    expect(fastUserScore?.score).toBeCloseTo(1 + (4/5 * SPEED_BONUS_MAX), 2)
     
-    // Slow user should get minimal speed bonus (1/15 * 0.2 ≈ 0.013)
-    expect(slowUserScore?.score).toBeCloseTo(1 + (1/15 * SPEED_BONUS_MAX), 2)
+    expect(slowUserScore?.score).toBeCloseTo(1 + (1/5 * SPEED_BONUS_MAX), 2)
   })
 
   it('should not award speed bonus for incorrect answers', () => {

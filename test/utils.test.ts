@@ -12,6 +12,7 @@ vi.mock('@slack/bolt', () => ({
   App: vi.fn(() => ({
     action: vi.fn(),
     event: vi.fn(),
+    command: vi.fn(),
     start: vi.fn(),
     logger: { info: vi.fn(), debug: vi.fn(), error: vi.fn() }
   })),

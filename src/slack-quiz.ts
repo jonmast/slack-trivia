@@ -1,13 +1,15 @@
 import { WebClient, HomeView } from "@slack/web-api"
 import { Logger } from "@slack/bolt"
-import { Quiz, TriviaStore, Question, TIMEOUT_SECS, getRemainingTime, getElapsedTime } from "./trivia-core"
-import { renderQuestion, renderResults } from "./slack-ui"
+import { Quiz, TriviaStore, Question, TIMEOUT_SECS, getRemainingTime, getElapsedTime, QuizCompleteError } from "./trivia-core"
+import { renderQuestion, renderResults, renderChannelQuestion, renderChannelResults, renderFinalSummary, renderFinalSummaryHome } from "./slack-ui"
 
 export class SlackQuiz {
   private quiz: Quiz
   private tick: NodeJS.Timeout
   private cachedRender: string | undefined
   private userViews: Map<string, string> = new Map() // userId -> viewId
+  private messageTs: string | undefined // For channel message updates
+  private userAnswers: Map<string, string> = new Map() // userId -> answerId for current question
   private state:
     | { type: "initial" }
     | {
@@ -15,20 +17,27 @@ export class SlackQuiz {
         question: Question
       }
     | {
+        type: "processing"
+        question: Question
+      }
+    | {
         type: "results"
         question: Question
       }
+    | { type: "complete" }
 
   constructor(
     private client: WebClient,
     private logger: Logger,
     private store: TriviaStore,
+    private channelId?: string, // Optional channel ID for channel-based quizzes
+    private onQuizEnd?: () => void, // Callback when quiz ends
   ) {
     this.quiz = new Quiz(store)
     this.state = { type: "initial" }
     // Listed rate is "100+", with burst
     this.tick = setInterval(() => {
-      this.updateView()
+      this.isChannelMode() ? this.updateChannelMessage() : this.updateView()
     }, 100)
   }
 
@@ -70,6 +79,8 @@ export class SlackQuiz {
     if (this.state.type === "question") {
       const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
       view = renderQuestion(this.state.question, Math.max(0, remaining))
+    } else if (this.state.type === "processing") {
+      view = renderQuestion(this.state.question, 0, true)
     } else if (this.state.type === "results") {
       const userScores = this.quiz.getUserScores()
       view = renderResults(this.state.question, userScores)
@@ -88,29 +99,107 @@ export class SlackQuiz {
   }
 
   async advance() {
-    const question = this.quiz.nextQuestion()
+    console.log('[SlackQuiz] advance() called from state:', this.state.type)
+    try {
+      const question = this.quiz.nextQuestion()
+      console.log('[SlackQuiz] nextQuestion() succeeded, transitioning to new question')
 
-    if (this.state.type !== "question" && this.state.type !== "results") {
-      throw new Error("Cannot advance from non-question state")
-    }
+      if (this.state.type !== "question" && this.state.type !== "results") {
+        throw new Error("Cannot advance from non-question state")
+      }
 
-    this.state = {
-      type: "question",
-      question: question,
+      if (this.isChannelMode()) {
+        const result = await this.client.chat.postMessage({
+          channel: this.channelId!,
+          blocks: renderChannelQuestion(question, TIMEOUT_SECS),
+          text: `Trivia Question: ${question.question.question.text}`,
+        })
+
+        if (result.ok && result.ts) {
+          this.messageTs = result.ts
+          this.userAnswers.clear()
+        } else {
+          throw new Error("Failed to post new channel question")
+        }
+      }
+
+      this.state = {
+        type: "question",
+        question: question,
+      }
+    } catch (error) {
+      if (error instanceof QuizCompleteError) {
+        console.log('[SlackQuiz] Quiz complete, transitioning to complete state')
+        this.logger.info("Quiz completed, showing final summary")
+        
+        this.state = { type: "complete" }
+        
+        setTimeout(() => {
+          console.log('[SlackQuiz] Grace period expired, calling abort() to end quiz')
+          this.abort()
+        }, 5000)
+        
+        if (this.isChannelMode() && this.channelId) {
+          const leaderboard = this.quiz.getLeaderboard()
+          const totalQuestions = this.quiz.getMaxQuestions()
+          
+          await this.client.chat.postMessage({
+            channel: this.channelId,
+            blocks: renderFinalSummary(leaderboard, totalQuestions),
+            text: "🎉 Trivia quiz completed! Thanks for playing!",
+          })
+          
+          if (this.onQuizEnd) {
+            this.onQuizEnd()
+          }
+        } else {
+          const leaderboard = this.quiz.getLeaderboard()
+          const totalQuestions = this.quiz.getMaxQuestions()
+          
+          for (const [userId, viewId] of this.userViews.entries()) {
+            try {
+              await this.client.views.update({
+                view_id: viewId,
+                view: renderFinalSummaryHome(leaderboard, totalQuestions),
+              })
+            } catch (err) {
+              this.logger.error(`Failed to update view for user ${userId}:`, err)
+            }
+          }
+          
+          if (this.onQuizEnd) {
+            this.onQuizEnd()
+          }
+        }
+        return
+      }
+      throw error
     }
   }
 
   updateView(): void {
     if (this.state.type === "initial") {
       console.log("pending initialization")
+    } else if (this.state.type === "complete") {
+      console.log('[SlackQuiz] Quiz complete, not calling advance()')
     } else if (this.state.type === "question") {
       const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
       if (remaining <= 0) {
+        console.log('[SlackQuiz] Question timeout - transitioning to processing state')
         this.state = {
-          type: "results",
+          type: "processing",
           question: this.state.question,
         }
-        return this.updateView()
+        setTimeout(() => {
+          if (this.state.type === "processing") {
+            console.log('[SlackQuiz] Processing complete - transitioning to results state')
+            this.state = {
+              type: "results",
+              question: this.state.question,
+            }
+          }
+        }, 1500)
+        return
       }
 
       const rendered = renderQuestion(this.state.question, remaining)
@@ -122,9 +211,13 @@ export class SlackQuiz {
         this.cachedRender = json
         this.updateAllUserViews(rendered)
       }
+    } else if (this.state.type === "processing") {
+      const rendered = renderQuestion(this.state.question, 0, true)
+      this.updateAllUserViews(rendered)
     } else if (this.state.type === "results") {
       const elapsed = getElapsedTime(this.state.question)
-      if (elapsed - TIMEOUT_SECS > 5) {
+      if (elapsed - TIMEOUT_SECS > 8) {
+        console.log('[SlackQuiz] Results timeout (8s) - calling advance()')
         this.advance()
         return
       } else {
@@ -132,7 +225,6 @@ export class SlackQuiz {
         const rendered = renderResults(this.state.question, leaderboard)
         this.updateAllUserViews(rendered)
       }
-      this.logger.info("Results")
     } else {
       throw new Error("Invalid state")
     }
@@ -151,17 +243,130 @@ export class SlackQuiz {
     }
   }
 
+  isChannelMode(): boolean {
+    return !!this.channelId
+  }
+
+  async startChannelQuiz(initiatorUserId: string): Promise<void> {
+    if (!this.isChannelMode()) {
+      throw new Error("Cannot start channel quiz without channel ID")
+    }
+
+    this.quiz.addUser(initiatorUserId)
+    const question = this.quiz.startQuiz()
+
+    const result = await this.client.chat.postMessage({
+      channel: this.channelId!,
+      blocks: renderChannelQuestion(question, TIMEOUT_SECS),
+      text: `Trivia Question: ${question.question.question.text}`,
+    })
+
+    if (result.ok && result.ts) {
+      this.messageTs = result.ts
+      this.state = {
+        type: "question",
+        question,
+      }
+    } else {
+      throw new Error("Failed to post channel question")
+    }
+  }
+
+  private async updateChannelMessage(): Promise<void> {
+    if (!this.isChannelMode() || !this.messageTs) {
+      return
+    }
+
+    if (this.state.type === "initial") {
+      this.logger.debug("Channel quiz pending initialization")
+    } else if (this.state.type === "question") {
+      const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
+      if (remaining <= 0) {
+        this.state = {
+          type: "processing",
+          question: this.state.question,
+        }
+        this.userAnswers.clear()
+        setTimeout(() => {
+          if (this.state.type === "processing") {
+            this.state = {
+              type: "results",
+              question: this.state.question,
+            }
+          }
+        }, 1500)
+        return
+      }
+
+      const rendered = renderChannelQuestion(this.state.question, remaining)
+      const json = JSON.stringify(rendered)
+
+      if (json === this.cachedRender) {
+        this.logger.debug("No change in channel message")
+      } else {
+        this.cachedRender = json
+        try {
+          await this.client.chat.update({
+            channel: this.channelId!,
+            ts: this.messageTs,
+            blocks: rendered,
+            text: `Trivia Question: ${this.state.question.question.question.text}`,
+          })
+        } catch (error) {
+          this.logger.error("Failed to update channel message:", error)
+        }
+      }
+    } else if (this.state.type === "processing") {
+      const rendered = renderChannelQuestion(this.state.question, 0, true)
+      try {
+        await this.client.chat.update({
+          channel: this.channelId!,
+          ts: this.messageTs,
+          blocks: rendered,
+          text: `Trivia Question: ${this.state.question.question.question.text}`,
+        })
+      } catch (error) {
+        this.logger.error("Failed to update channel message:", error)
+      }
+      } else if (this.state.type === "results") {
+      const elapsed = getElapsedTime(this.state.question)
+      if (elapsed - TIMEOUT_SECS > 8) {
+        console.log('[SlackQuiz] Channel results timeout (8s) - calling advance()')
+        this.advance()
+        return
+      } else {
+        const leaderboard = this.quiz.getLeaderboard()
+        const rendered = renderChannelResults(this.state.question, leaderboard)
+        try {
+          await this.client.chat.update({
+            channel: this.channelId!,
+            ts: this.messageTs,
+            blocks: rendered,
+            text: `Trivia Results: ${this.state.question.question.question.text}`,
+          })
+        } catch (error) {
+          this.logger.error("Failed to update channel results:", error)
+        }
+      }
+    }
+  }
+
   abort() {
+    console.log('[SlackQuiz] abort() called - ending quiz and clearing interval')
     clearInterval(this.tick)
     this.quiz.endQuiz()
   }
 
-  submitAnswer(userId: string, answerId: string, timestamp: Date) {
-    if (this.state.type !== "question") {
-      throw new Error("Cannot submit answer from non-question state")
+  submitAnswer(userId: string, answerId: string, timestamp: Date, questionId?: string) {
+    this.quiz.addUser(userId)
+    
+    if (this.isChannelMode()) {
+      if (this.userAnswers.has(userId)) {
+        return false
+      }
+      this.userAnswers.set(userId, answerId)
     }
-
-    this.quiz.addUser(userId) // Ensure user is added to quiz
-    return this.quiz.submitAnswer(userId, answerId, timestamp)
+    
+    return this.quiz.submitAnswer(userId, answerId, timestamp, questionId)
   }
 }
