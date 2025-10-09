@@ -62,17 +62,19 @@ export function renderResults(question: Question, userScores: UserScore[]): Home
 }
 
 export function renderChannelQuestion(question: Question, countdown: number, disabled: boolean = false): (Block | KnownBlock)[] {
-  const block: any = {
-    block_id: question.question.id,
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: `🧠 *Trivia Question* ${disabled ? "(⏱️ Time's up!)" : `(${countdown.toFixed(0)}s remaining)`}\n\n*${question.question.question.text}*`,
-    },
-  }
+  const blocks: any[] = [
+    {
+      block_id: question.question.id,
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `🧠 *Trivia Question* ${disabled ? "(⏱️ Time's up!)" : `(${countdown.toFixed(0)}s remaining)`}\n\n*${question.question.question.text}*`,
+      },
+    }
+  ]
 
   if (!disabled) {
-    block.accessory = {
+    blocks[0].accessory = {
       type: "radio_buttons",
       action_id: "radio_sel",
       options: question.answers.map((answer) => ({
@@ -83,9 +85,17 @@ export function renderChannelQuestion(question: Question, countdown: number, dis
         },
       })),
     }
+  } else {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: question.answers.map((answer) => `• ${answer.text}`).join("\n"),
+      },
+    })
   }
 
-  return [block]
+  return blocks
 }
 
 export function renderChannelResults(question: Question, userScores: UserScore[]): (Block | KnownBlock)[] {
@@ -111,6 +121,15 @@ export function renderChannelResults(question: Question, userScores: UserScore[]
         type: "mrkdwn",
         text: `🏆 *Current Leaderboard:*\n${leaderboard || "No scores yet"}`,
       },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: " ",
+        },
+      ],
     },
   ]
 }

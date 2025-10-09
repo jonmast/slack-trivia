@@ -210,7 +210,9 @@ export class Quiz {
   }
 
   nextQuestion(): Question {
+    console.log('[Quiz] nextQuestion() called - current questions:', this.state.questions.length, 'max:', this.state.maxQuestions)
     if (this.state.questions.length >= this.state.maxQuestions) {
+      console.log('[Quiz] Throwing QuizCompleteError - reached max questions')
       throw new QuizCompleteError();
     }
 
@@ -218,6 +220,7 @@ export class Quiz {
     const question = createQuestion(apiQuestion);
     this.state.currentQuestion = question;
     this.state.questions.push(question);
+    console.log('[Quiz] Question added - total questions now:', this.state.questions.length)
 
     return question;
   }

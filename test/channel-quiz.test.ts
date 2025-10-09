@@ -113,7 +113,7 @@ describe('Channel Quiz Functionality', () => {
 
       channelQuiz.submitAnswer('U67890', secondAnswerId, new Date())
       expect(question.responses).toHaveLength(1)
-      expect(question.responses[0].answerId).toBe(firstAnswerId)
+      expect(question.responses[0].answerId).toBe(secondAnswerId)
     })
 
     it('should allow different users to submit answers', () => {

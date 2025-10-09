@@ -64,7 +64,7 @@ describe('Channel UI Components', () => {
     it('should render results with leaderboard', () => {
       const blocks = renderChannelResults(mockQuestion, mockLeaderboard)
 
-      expect(blocks).toHaveLength(2)
+      expect(blocks).toHaveLength(3)
 
       // First block should show correct answer
       expect(blocks[0].type).toBe('section')
@@ -82,7 +82,7 @@ describe('Channel UI Components', () => {
     it('should handle empty leaderboard', () => {
       const blocks = renderChannelResults(mockQuestion, [])
 
-      expect(blocks).toHaveLength(2)
+      expect(blocks).toHaveLength(3)
       expect((blocks[1] as any).text.text).toContain('🏆 *Current Leaderboard:*')
       expect((blocks[1] as any).text.text).toContain('No scores yet')
     })

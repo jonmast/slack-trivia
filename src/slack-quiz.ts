@@ -10,6 +10,8 @@ export class SlackQuiz {
   private userViews: Map<string, string> = new Map() // userId -> viewId
   private messageTs: string | undefined // For channel message updates
   private userAnswers: Map<string, string> = new Map() // userId -> answerId for current question
+  private isAdvancing: boolean = false
+  private timeoutSecs: number
   private state:
     | { type: "initial" }
     | {
@@ -30,12 +32,14 @@ export class SlackQuiz {
     private client: WebClient,
     private logger: Logger,
     private store: TriviaStore,
-    private channelId?: string, // Optional channel ID for channel-based quizzes
-    private onQuizEnd?: () => void, // Callback when quiz ends
+    private channelId?: string,
+    private onQuizEnd?: () => void,
+    maxQuestions: number = 3,
+    timeoutSecs: number = TIMEOUT_SECS,
   ) {
-    this.quiz = new Quiz(store)
+    this.quiz = new Quiz(store, maxQuestions)
+    this.timeoutSecs = timeoutSecs
     this.state = { type: "initial" }
-    // Listed rate is "100+", with burst
     this.tick = setInterval(() => {
       this.isChannelMode() ? this.updateChannelMessage() : this.updateView()
     }, 100)
@@ -44,7 +48,6 @@ export class SlackQuiz {
   async initialize(user: string): Promise<void> {
     this.quiz.addUser(user)
 
-    // If quiz already started, just add user to existing quiz
     if (this.state.type !== "initial") {
       await this.addUserToExistingQuiz(user)
       return
@@ -54,7 +57,7 @@ export class SlackQuiz {
 
     const view = await this.client.views.publish({
       user_id: user,
-      view: renderQuestion(question, 30),
+      view: renderQuestion(question, this.timeoutSecs),
     })
 
     if (view.ok) {
@@ -68,7 +71,6 @@ export class SlackQuiz {
         question,
       }
     } else {
-      // TODO: real error handling
       console.error(view.error)
     }
   }
@@ -77,7 +79,7 @@ export class SlackQuiz {
     let view: HomeView
 
     if (this.state.type === "question") {
-      const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
+      const remaining = getRemainingTime(this.state.question, this.timeoutSecs)
       view = renderQuestion(this.state.question, Math.max(0, remaining))
     } else if (this.state.type === "processing") {
       view = renderQuestion(this.state.question, 0, true)
@@ -99,6 +101,12 @@ export class SlackQuiz {
   }
 
   async advance() {
+    if (this.isAdvancing) {
+      console.log('[SlackQuiz] advance() already in progress, skipping')
+      return
+    }
+    
+    this.isAdvancing = true
     console.log('[SlackQuiz] advance() called from state:', this.state.type)
     try {
       const question = this.quiz.nextQuestion()
@@ -109,17 +117,20 @@ export class SlackQuiz {
       }
 
       if (this.isChannelMode()) {
-        const result = await this.client.chat.postMessage({
-          channel: this.channelId!,
-          blocks: renderChannelQuestion(question, TIMEOUT_SECS),
-          text: `Trivia Question: ${question.question.question.text}`,
-        })
+        if (!this.messageTs) {
+          throw new Error("No message timestamp available for update")
+        }
 
-        if (result.ok && result.ts) {
-          this.messageTs = result.ts
+        try {
+          await this.client.chat.update({
+            channel: this.channelId!,
+            ts: this.messageTs,
+            blocks: renderChannelQuestion(question, this.timeoutSecs),
+            text: `Trivia Question: ${question.question.question.text}`,
+          })
           this.userAnswers.clear()
-        } else {
-          throw new Error("Failed to post new channel question")
+        } catch (error) {
+          throw new Error("Failed to update channel question")
         }
       }
 
@@ -139,12 +150,13 @@ export class SlackQuiz {
           this.abort()
         }, 5000)
         
-        if (this.isChannelMode() && this.channelId) {
+        if (this.isChannelMode() && this.channelId && this.messageTs) {
           const leaderboard = this.quiz.getLeaderboard()
           const totalQuestions = this.quiz.getMaxQuestions()
           
-          await this.client.chat.postMessage({
+          await this.client.chat.update({
             channel: this.channelId,
+            ts: this.messageTs,
             blocks: renderFinalSummary(leaderboard, totalQuestions),
             text: "🎉 Trivia quiz completed! Thanks for playing!",
           })
@@ -174,6 +186,8 @@ export class SlackQuiz {
         return
       }
       throw error
+    } finally {
+      this.isAdvancing = false
     }
   }
 
@@ -183,7 +197,7 @@ export class SlackQuiz {
     } else if (this.state.type === "complete") {
       console.log('[SlackQuiz] Quiz complete, not calling advance()')
     } else if (this.state.type === "question") {
-      const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
+      const remaining = getRemainingTime(this.state.question, this.timeoutSecs)
       if (remaining <= 0) {
         console.log('[SlackQuiz] Question timeout - transitioning to processing state')
         this.state = {
@@ -216,7 +230,7 @@ export class SlackQuiz {
       this.updateAllUserViews(rendered)
     } else if (this.state.type === "results") {
       const elapsed = getElapsedTime(this.state.question)
-      if (elapsed - TIMEOUT_SECS > 8) {
+      if (elapsed - this.timeoutSecs > 8) {
         console.log('[SlackQuiz] Results timeout (8s) - calling advance()')
         this.advance()
         return
@@ -257,7 +271,7 @@ export class SlackQuiz {
 
     const result = await this.client.chat.postMessage({
       channel: this.channelId!,
-      blocks: renderChannelQuestion(question, TIMEOUT_SECS),
+      blocks: renderChannelQuestion(question, this.timeoutSecs),
       text: `Trivia Question: ${question.question.question.text}`,
     })
 
@@ -280,7 +294,7 @@ export class SlackQuiz {
     if (this.state.type === "initial") {
       this.logger.debug("Channel quiz pending initialization")
     } else if (this.state.type === "question") {
-      const remaining = getRemainingTime(this.state.question, TIMEOUT_SECS)
+      const remaining = getRemainingTime(this.state.question, this.timeoutSecs)
       if (remaining <= 0) {
         this.state = {
           type: "processing",
@@ -318,34 +332,50 @@ export class SlackQuiz {
       }
     } else if (this.state.type === "processing") {
       const rendered = renderChannelQuestion(this.state.question, 0, true)
-      try {
-        await this.client.chat.update({
-          channel: this.channelId!,
-          ts: this.messageTs,
-          blocks: rendered,
-          text: `Trivia Question: ${this.state.question.question.question.text}`,
-        })
-      } catch (error) {
-        this.logger.error("Failed to update channel message:", error)
+      const json = JSON.stringify(rendered)
+      
+      if (json === this.cachedRender) {
+        this.logger.debug("No change in channel message")
+      } else {
+        this.cachedRender = json
+        try {
+          await this.client.chat.update({
+            channel: this.channelId!,
+            ts: this.messageTs,
+            blocks: rendered,
+            text: `Trivia Question: ${this.state.question.question.question.text}`,
+          })
+        } catch (error) {
+          this.logger.error("Failed to update channel message:", error)
+        }
       }
-      } else if (this.state.type === "results") {
+    } else if (this.state.type === "results") {
       const elapsed = getElapsedTime(this.state.question)
-      if (elapsed - TIMEOUT_SECS > 8) {
+      const resultsDuration = elapsed - this.timeoutSecs
+      console.log('[SlackQuiz] Results state - elapsed:', elapsed.toFixed(1), 's, resultsDuration:', resultsDuration.toFixed(1), 's (threshold: 8s)')
+      if (resultsDuration > 8) {
         console.log('[SlackQuiz] Channel results timeout (8s) - calling advance()')
         this.advance()
         return
       } else {
         const leaderboard = this.quiz.getLeaderboard()
         const rendered = renderChannelResults(this.state.question, leaderboard)
-        try {
-          await this.client.chat.update({
-            channel: this.channelId!,
-            ts: this.messageTs,
-            blocks: rendered,
-            text: `Trivia Results: ${this.state.question.question.question.text}`,
-          })
-        } catch (error) {
-          this.logger.error("Failed to update channel results:", error)
+        const json = JSON.stringify(rendered)
+        
+        if (json === this.cachedRender) {
+          this.logger.debug("No change in channel message")
+        } else {
+          this.cachedRender = json
+          try {
+            await this.client.chat.update({
+              channel: this.channelId!,
+              ts: this.messageTs,
+              blocks: rendered,
+              text: `Trivia Results: ${this.state.question.question.question.text}`,
+            })
+          } catch (error) {
+            this.logger.error("Failed to update channel results:", error)
+          }
         }
       }
     }
@@ -361,9 +391,6 @@ export class SlackQuiz {
     this.quiz.addUser(userId)
     
     if (this.isChannelMode()) {
-      if (this.userAnswers.has(userId)) {
-        return false
-      }
       this.userAnswers.set(userId, answerId)
     }
     

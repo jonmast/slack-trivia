@@ -48,19 +48,12 @@ app.action("radio_sel", async ({ ack, body, logger, respond }) => {
       const channelQuiz = CHANNEL_QUIZZES.get(channelId);
       if (channelQuiz) {
         try {
-          const success = channelQuiz.submitAnswer(userId, answer, parseTs(action.action_ts), questionId);
-          
-          if (success === false) {
-            await respond({
-              response_type: "ephemeral",
-              text: "You've already answered this question!",
-            });
-          } else {
-            await respond({
-              response_type: "ephemeral",
-              text: "Answer submitted! ✅",
-            });
-          }
+          channelQuiz.submitAnswer(
+            userId,
+            answer,
+            parseTs(action.action_ts),
+            questionId,
+          );
         } catch (error) {
           logger.error("Error submitting channel answer:", error);
           await respond({
@@ -70,7 +63,7 @@ app.action("radio_sel", async ({ ack, body, logger, respond }) => {
         }
         return;
       }
-      
+
       await respond({
         response_type: "ephemeral",
         text: "No active quiz found in this channel.",
@@ -85,9 +78,17 @@ app.action("radio_sel", async ({ ack, body, logger, respond }) => {
     }
 
     try {
-      CURRENT_QUIZ.submitAnswer(userId, answer, parseTs(action.action_ts), questionId);
+      CURRENT_QUIZ.submitAnswer(
+        userId,
+        answer,
+        parseTs(action.action_ts),
+        questionId,
+      );
     } catch (error) {
-      logger.info("Home tab answer submission failed - quiz likely ended:", error);
+      logger.info(
+        "Home tab answer submission failed - quiz likely ended:",
+        error,
+      );
     }
   } else {
     logger.error("Unrecognized event", body);
@@ -97,10 +98,15 @@ app.action("radio_sel", async ({ ack, body, logger, respond }) => {
 app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   await ack();
   
+  logger.info("🎯 /quizzo command received!", {
+    channel: command.channel_id,
+    user: command.user_id,
+    text: command.text,
+  });
+
   try {
     const channelId = command.channel_id;
-    
-    // Check if there's already a quiz running in this channel
+
     if (CHANNEL_QUIZZES.has(channelId)) {
       await respond({
         response_type: "ephemeral",
@@ -108,25 +114,54 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
       });
       return;
     }
+
+    const args = command.text.trim().split(/\s+/).filter(arg => arg.length > 0);
     
-    // Create new channel quiz with cleanup callback
+    let numQuestions = 3;
+    let timeoutSecs = 5;
+
+    if (args.length > 0) {
+      const parsedQuestions = parseInt(args[0], 10);
+      if (isNaN(parsedQuestions) || parsedQuestions < 1 || parsedQuestions > 20) {
+        await respond({
+          response_type: "ephemeral",
+          text: "Invalid number of questions. Please provide a number between 1 and 20.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
+        });
+        return;
+      }
+      numQuestions = parsedQuestions;
+    }
+
+    if (args.length > 1) {
+      const timeArg = args[1];
+      if (!timeArg.endsWith('s')) {
+        await respond({
+          response_type: "ephemeral",
+          text: "Invalid time format. Seconds must be suffixed with 's'.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
+        });
+        return;
+      }
+      const parsedSeconds = parseInt(timeArg.slice(0, -1), 10);
+      if (isNaN(parsedSeconds) || parsedSeconds < 1 || parsedSeconds > 60) {
+        await respond({
+          response_type: "ephemeral",
+          text: "Invalid timeout. Please provide seconds between 1 and 60.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
+        });
+        return;
+      }
+      timeoutSecs = parsedSeconds;
+    }
+
     const channelQuiz = new SlackQuiz(client, logger, STORE, channelId, () => {
       cleanupChannelQuiz(channelId);
-    });
+    }, numQuestions, timeoutSecs);
     CHANNEL_QUIZZES.set(channelId, channelQuiz);
-    
-    // Start the quiz
+
     await channelQuiz.startChannelQuiz(command.user_id);
-    
-    await respond({
-      response_type: "in_channel",
-      text: `🧠 Trivia quiz started by <@${command.user_id}>! Get ready for the first question...`,
-    });
-    
   } catch (error) {
     logger.error("Error starting channel quiz:", error);
     await respond({
-      response_type: "ephemeral", 
+      response_type: "ephemeral",
       text: "Sorry, there was an error starting the trivia quiz. Please try again.",
     });
   }
@@ -145,9 +180,11 @@ app.event("app_home_opened", async ({ event, client, logger }) => {
 });
 
 (async () => {
-  const port = process.env.PORT || 3000;
-  // Start your app
-  await app.start(port);
+  // Start your app (Socket Mode - no port needed)
+  await app.start();
 
-  app.logger.info(`⚡️ Bolt app is running on ${port}!`);
+  app.logger.info(`⚡️ Bolt app is running in Socket Mode!`);
+  app.logger.info(
+    `📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel`,
+  );
 })();
