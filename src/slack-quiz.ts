@@ -121,13 +121,15 @@ export class SlackQuiz {
           throw new Error("No message timestamp available for update")
         }
 
-        try {
-          await this.client.chat.update({
-            channel: this.channelId!,
-            ts: this.messageTs,
-            blocks: renderChannelQuestion(question, this.timeoutSecs),
-            text: `Trivia Question: ${question.question.question.text}`,
-          })
+try {
+           const progress = this.quiz.getProgress();
+const blocks = renderChannelQuestion(question, this.timeoutSecs, Math.min(progress.current, progress.total), progress.total);
+           await this.client.chat.update({
+             channel: this.channelId!,
+             ts: this.messageTs,
+             blocks,
+             text: `Trivia Question: ${question.question.question.text}`,
+           })
           this.userAnswers.clear()
         } catch (error) {
           throw new Error("Failed to update channel question")
@@ -269,11 +271,13 @@ export class SlackQuiz {
     this.quiz.addUser(initiatorUserId)
     const question = this.quiz.startQuiz()
 
-    const result = await this.client.chat.postMessage({
-      channel: this.channelId!,
-      blocks: renderChannelQuestion(question, this.timeoutSecs),
-      text: `Trivia Question: ${question.question.question.text}`,
-    })
+const progress = this.quiz.getProgress();
+const blocks = renderChannelQuestion(question, this.timeoutSecs, Math.min(progress.current, progress.total), progress.total);
+const result = await this.client.chat.postMessage({
+       channel: this.channelId!,
+       blocks,
+       text: `Trivia Question: ${question.question.question.text}`,
+     })
 
     if (result.ok && result.ts) {
       this.messageTs = result.ts
@@ -312,7 +316,8 @@ export class SlackQuiz {
         return
       }
 
-      const rendered = renderChannelQuestion(this.state.question, remaining)
+      const progress = this.quiz.getProgress();
+const rendered = renderChannelQuestion(this.state.question, remaining, Math.min(progress.current, progress.total), progress.total)
       const json = JSON.stringify(rendered)
 
       if (json === this.cachedRender) {
@@ -331,7 +336,8 @@ export class SlackQuiz {
         }
       }
     } else if (this.state.type === "processing") {
-      const rendered = renderChannelQuestion(this.state.question, 0, true)
+      const progress = this.quiz.getProgress();
+const rendered = renderChannelQuestion(this.state.question, 0, Math.min(progress.current, progress.total), progress.total, true)
       const json = JSON.stringify(rendered)
       
       if (json === this.cachedRender) {
@@ -359,21 +365,22 @@ export class SlackQuiz {
         return
       } else {
         const leaderboard = this.quiz.getLeaderboard()
-        const rendered = renderChannelResults(this.state.question, leaderboard)
+        const progress = this.quiz.getProgress();
+        const rendered = renderChannelResults(this.state.question, leaderboard, Math.min(progress.current, progress.total), progress.total)
         const json = JSON.stringify(rendered)
         
         if (json === this.cachedRender) {
           this.logger.debug("No change in channel message")
         } else {
           this.cachedRender = json
-          try {
-            await this.client.chat.update({
-              channel: this.channelId!,
-              ts: this.messageTs,
-              blocks: rendered,
-              text: `Trivia Results: ${this.state.question.question.question.text}`,
-            })
-          } catch (error) {
+try {
+  await this.client.chat.update({
+    channel: this.channelId!,
+    ts: this.messageTs,
+    blocks: rendered,
+    text: `Trivia Question: ${this.state.question.question.question.text}`,
+  })
+           } catch (error) {
             this.logger.error("Failed to update channel results:", error)
           }
         }

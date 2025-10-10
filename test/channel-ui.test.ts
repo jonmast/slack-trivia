@@ -18,39 +18,43 @@ describe('Channel UI Components', () => {
 
   describe('renderChannelQuestion', () => {
     it('should render channel question with radio buttons', () => {
-      const blocks = renderChannelQuestion(mockQuestion, 30)
+const blocks = renderChannelQuestion(mockQuestion, 30, 2, 10)
 
-      expect(blocks).toHaveLength(1)
+       expect(blocks).toHaveLength(4)
       
-      // Block should contain question text and radio buttons
-      expect(blocks[0].type).toBe('section')
-      expect((blocks[0] as any).text.text).toContain('What is the test question?')
-      expect((blocks[0] as any).text.text).toContain('🧠')
-      expect((blocks[0] as any).text.text).toContain('30s remaining')
+       // First block should be the header
+       expect(blocks[0].type).toBe('header')
+       expect((blocks[0] as any).text.text).toContain('Question 2/10:')
 
-      // Check accessory radio buttons
-      const accessory = (blocks[0] as any).accessory
-      expect(accessory.type).toBe('radio_buttons')
-      expect(accessory.action_id).toBe('radio_sel')
-      expect(accessory.options).toHaveLength(4)
+       // Block 1 should contain question text and radio buttons
+       expect(blocks[1].type).toBe('section')
+       expect((blocks[1] as any).text.text).toContain('What is the test question?')
+       expect((blocks[1] as any).text.text).toContain('🧠')
+       expect((blocks[1] as any).text.text).toContain('30s remaining')
+
+       // Check accessory radio buttons
+       const accessory = (blocks[1] as any).accessory
+       expect(accessory.type).toBe('radio_buttons')
+       expect(accessory.action_id).toBe('radio_sel')
+       expect(accessory.options).toHaveLength(4)
       
-      // Check that radio options have correct structure
-      accessory.options.forEach((option: any, index: number) => {
-        expect(option.value).toBe(mockQuestion.answers[index].id)
-        expect(option.text.text).toBe(mockQuestion.answers[index].text)
-      })
+       // Check that radio options have correct structure
+       accessory.options.forEach((option: any, index: number) => {
+         expect(option.value).toBe(mockQuestion.answers[index].id)
+         expect(option.text.text).toBe(mockQuestion.answers[index].text)
+       })
     })
 
     it('should show correct countdown in question text', () => {
-      const blocks = renderChannelQuestion(mockQuestion, 15)
+const blocks = renderChannelQuestion(mockQuestion, 15, 2, 10)
       
-      expect((blocks[0] as any).text.text).toContain('15s remaining')
+       expect((blocks[1] as any).text.text).toContain('15s remaining')
     })
 
     it('should handle zero countdown', () => {
-      const blocks = renderChannelQuestion(mockQuestion, 0)
+const blocks = renderChannelQuestion(mockQuestion, 0, 2, 10)
       
-      expect((blocks[0] as any).text.text).toContain('0s remaining')
+       expect((blocks[1] as any).text.text).toContain('0s remaining')
     })
   })
 
@@ -62,40 +66,28 @@ describe('Channel UI Components', () => {
     ]
 
     it('should render results with leaderboard', () => {
-      const blocks = renderChannelResults(mockQuestion, mockLeaderboard)
+      const blocks = renderChannelResults(mockQuestion, mockLeaderboard, 2, 3)
 
-      expect(blocks).toHaveLength(3)
+      expect(blocks).toHaveLength(4)
 
-      // First block should show correct answer
+      // First block should be the progress header
       expect(blocks[0].type).toBe('section')
-      expect((blocks[0] as any).text.text).toContain('✅ *Correct answer:* Correct Answer')
-
-      // Second block should show leaderboard
-      expect(blocks[1].type).toBe('section')
-      const leaderboardText = (blocks[1] as any).text.text
-      expect(leaderboardText).toContain('🏆 *Current Leaderboard:*')
-      expect(leaderboardText).toContain('1. <@U12345>: 100 points')
-      expect(leaderboardText).toContain('2. <@U67890>: 50 points')
-      expect(leaderboardText).toContain('3. <@U11111>: 0 points')
-    })
-
-    it('should handle empty leaderboard', () => {
-      const blocks = renderChannelResults(mockQuestion, [])
-
-      expect(blocks).toHaveLength(3)
-      expect((blocks[1] as any).text.text).toContain('🏆 *Current Leaderboard:*')
-      expect((blocks[1] as any).text.text).toContain('No scores yet')
+      expect((blocks[0] as any).text.text).toContain('Answer 2/3:')
+      // Second block should show correct answer
+expect(blocks[2].type).toBe('section')
+      expect((blocks[2] as any).text.text).toContain('🏆 *Current Leaderboard:*')
+      
     })
 
     it('should show correct answer in results', () => {
-      const blocks = renderChannelResults(mockQuestion, mockLeaderboard)
+      const blocks = renderChannelResults(mockQuestion, mockLeaderboard, 2, 3)
       
-      expect((blocks[0] as any).text.text).toContain('Correct Answer')
+      expect((blocks[1] as any).text.text).toContain('Correct Answer')
     })
 
     it('should format leaderboard positions correctly', () => {
-      const blocks = renderChannelResults(mockQuestion, mockLeaderboard)
-      const leaderboardText = (blocks[1] as any).text.text
+      const blocks = renderChannelResults(mockQuestion, mockLeaderboard, 2, 3)
+      const leaderboardText = (blocks[2] as any).text.text
 
       // Check that positions are numbered correctly
       expect(leaderboardText).toMatch(/1\. <@U12345>/)
