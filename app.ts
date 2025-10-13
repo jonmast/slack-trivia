@@ -14,11 +14,13 @@ function cleanupChannelQuiz(channelId: string) {
 }
 
 // Initializes your app with your bot token and signing secret
+const isSocketMode = process.env.SLACK_SOCKET_MODE === "true";
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
-  socketMode: true,
-  appToken: process.env.SLACK_APP_TOKEN,
+  ...(isSocketMode
+    ? { socketMode: true, appToken: process.env.SLACK_APP_TOKEN }
+    : { port: process.env.PORT ? Number(process.env.PORT) : 3000 }),
 });
 
 const STORE = new TriviaStore();
@@ -97,7 +99,7 @@ app.action("radio_sel", async ({ ack, body, logger, respond }) => {
 
 app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   await ack();
-  
+
   logger.info("🎯 /quizzo command received!", {
     channel: command.channel_id,
     user: command.user_id,
@@ -115,14 +117,21 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
       return;
     }
 
-    const args = command.text.trim().split(/\s+/).filter(arg => arg.length > 0);
-    
+    const args = command.text
+      .trim()
+      .split(/\s+/)
+      .filter((arg: string) => arg.length > 0);
+
     let numQuestions = 3;
     let timeoutSecs = 5;
 
     if (args.length > 0) {
       const parsedQuestions = parseInt(args[0], 10);
-      if (isNaN(parsedQuestions) || parsedQuestions < 1 || parsedQuestions > 20) {
+      if (
+        isNaN(parsedQuestions) ||
+        parsedQuestions < 1 ||
+        parsedQuestions > 20
+      ) {
         await respond({
           response_type: "ephemeral",
           text: "Invalid number of questions. Please provide a number between 1 and 20.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
@@ -134,7 +143,7 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
 
     if (args.length > 1) {
       const timeArg = args[1];
-      if (!timeArg.endsWith('s')) {
+      if (!timeArg.endsWith("s")) {
         await respond({
           response_type: "ephemeral",
           text: "Invalid time format. Seconds must be suffixed with 's'.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
@@ -152,9 +161,17 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
       timeoutSecs = parsedSeconds;
     }
 
-    const channelQuiz = new SlackQuiz(client, logger, STORE, channelId, () => {
-      cleanupChannelQuiz(channelId);
-    }, numQuestions, timeoutSecs);
+    const channelQuiz = new SlackQuiz(
+      client,
+      logger,
+      STORE,
+      channelId,
+      () => {
+        cleanupChannelQuiz(channelId);
+      },
+      numQuestions,
+      timeoutSecs,
+    );
     CHANNEL_QUIZZES.set(channelId, channelQuiz);
 
     await channelQuiz.startChannelQuiz(command.user_id);
@@ -180,10 +197,15 @@ app.event("app_home_opened", async ({ event, client, logger }) => {
 });
 
 (async () => {
-  // Start your app (Socket Mode - no port needed)
   await app.start();
 
-  app.logger.info(`⚡️ Bolt app is running in Socket Mode!`);
+  if (isSocketMode) {
+    app.logger.info(`⚡️ Bolt app is running in Socket Mode!`);
+  } else {
+    app.logger.info(
+      `⚡️ Bolt app is running in HTTP mode on port ${process.env.PORT || 3000}!`,
+    );
+  }
   app.logger.info(
     `📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel`,
   );
