@@ -301,19 +301,25 @@ const result = await this.client.chat.postMessage({
       const remaining = getRemainingTime(this.state.question, this.timeoutSecs)
       if (remaining <= 0) {
         this.state = {
-          type: "processing",
+          type: "results",
           question: this.state.question,
         }
         this.userAnswers.clear()
-        setTimeout(() => {
-          if (this.state.type === "processing") {
-            this.state = {
-              type: "results",
-              question: this.state.question,
-            }
-          }
-        }, 1500)
-        return
+        // Immediately update to results screen
+        const leaderboard = this.quiz.getLeaderboard();
+        const progress = this.quiz.getProgress();
+        const rendered = renderChannelResults(this.state.question, leaderboard, Math.min(progress.current, progress.total), progress.total);
+        try {
+          await this.client.chat.update({
+            channel: this.channelId!,
+            ts: this.messageTs,
+            blocks: rendered,
+            text: `Trivia Question: ${this.state.question.question.question.text}`,
+          });
+        } catch (error) {
+          this.logger.error("Failed to update channel message to results:", error);
+        }
+        return;
       }
 
       const progress = this.quiz.getProgress();
@@ -337,7 +343,7 @@ const rendered = renderChannelQuestion(this.state.question, remaining, Math.min(
       }
     } else if (this.state.type === "processing") {
       const progress = this.quiz.getProgress();
-const rendered = renderChannelQuestion(this.state.question, 0, Math.min(progress.current, progress.total), progress.total, true)
+const rendered = renderChannelQuestion(this.state.question, 0, Math.min(progress.current, progress.total), progress.total)
       const json = JSON.stringify(rendered)
       
       if (json === this.cachedRender) {
