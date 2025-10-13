@@ -61,7 +61,7 @@ export function renderResults(question: Question, userScores: UserScore[]): Home
   }
 }
 
-export function renderChannelQuestion(question: Question, countdown: number, current: number, total: number, disabled: boolean = false): (Block | KnownBlock)[] {
+export function renderChannelQuestion(question: Question, countdown: number, current: number, total: number): (Block | KnownBlock)[] {
    // Block 0: Progress header
    const headerBlock = {
      type: "header",
@@ -71,17 +71,15 @@ export function renderChannelQuestion(question: Question, countdown: number, cur
      },
    };
 
-   // Block 1: Section with question text (and radio buttons if active)
+   // Block 1: Section with question text and radio buttons
    const questionBlock: any = {
     block_id: question.question.id,
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `🧠 *Trivia Question* ${disabled ? "(⏱️ Time's up!)" : `(${countdown.toFixed(0)}s remaining)`}\n\n*${question.question.question.text}*`,
+      text: `🧠 *Trivia Question* (${countdown.toFixed(0)}s remaining)\n\n*${question.question.question.text}*`,
     },
-  };
-  if (!disabled) {
-    questionBlock.accessory = {
+    accessory: {
       type: "radio_buttons",
       action_id: "radio_sel",
       options: question.answers.map((answer) => ({
@@ -91,33 +89,22 @@ export function renderChannelQuestion(question: Question, countdown: number, cur
           text: answer.text.substring(0, 150),
         },
       })),
-    };
-  }
+    },
+  };
 
-  // Block 2: Section with static answer list (only when disabled), or placeholder
-  let answersBlock: any;
-  if (disabled) {
-    answersBlock = {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: question.answers.map((answer) => `• ${answer.text}`).join("\n"),
-      },
-    };
-  } else {
-    answersBlock = {
-      type: "section",
-      text: { type: "mrkdwn", text: " " },
-    };
-  }
+  // Block 2: Placeholder (no static answer list needed)
+  const answersBlock = {
+    type: "section",
+    text: { type: "mrkdwn", text: " " },
+  };
 
-  // Block 3: Context (status/info or placeholder)
+  // Block 3: Context (placeholder)
   const contextBlock = {
     type: "context",
     elements: [
       {
         type: "mrkdwn",
-        text: disabled ? "⏱️ Time's up! No more answers can be submitted." : " ",
+        text: " ",
       },
     ],
   };
