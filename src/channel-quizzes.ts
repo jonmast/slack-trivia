@@ -21,6 +21,15 @@ export class ChannelQuizzes {
     return quiz && !quiz.isFinished() ? quiz : undefined
   }
 
+  /**
+   * The channel's quiz only if it has finished and is hosted by `messageTs`.
+   * A Recap button from an older summary must not read a newer quiz.
+   */
+  finished(channelId: string, messageTs: string): SlackQuiz | undefined {
+    const quiz = this.quizzes.get(channelId)
+    return quiz && quiz.isFinished() && quiz.getMessageTs() === messageTs ? quiz : undefined
+  }
+
   replace(channelId: string, quiz: SlackQuiz): void {
     this.quizzes.set(channelId, quiz)
   }

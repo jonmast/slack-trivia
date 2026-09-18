@@ -96,6 +96,25 @@ describe('Quiz.getRecap', () => {
 
     expect(quiz.getRecap('u1')[0].answered).toBe(true)
   })
+
+  it('gives a non-participant the full quiz with nothing selected and zero points', () => {
+    const q1 = quiz.startQuiz()
+    quiz.submitAnswer('u1', q1.correctAnswer.id, q1.timestamp)
+    quiz.nextQuestion()
+    quiz.nextQuestion()
+    quiz.endQuiz()
+
+    const recap = quiz.getRecap('nobody')
+
+    expect(recap).toHaveLength(3)
+    for (const entry of recap) {
+      expect(entry.answered).toBe(false)
+      expect(entry.points).toBe(0)
+      expect(entry.options).toHaveLength(4)
+      expect(entry.options.filter((o) => o.selected)).toHaveLength(0)
+      expect(entry.options.filter((o) => o.correct)).toHaveLength(1)
+    }
+  })
 })
 
 describe('renderRecapModal', () => {
@@ -177,6 +196,29 @@ describe('renderRecapModal', () => {
     expect(text).not.toContain('✅')
     expect(text).not.toContain('❌')
   })
+
+  it('renders a non-participant recap with 💡 only, "(no answer)" on every question, and zero total', () => {
+    const untouched = recap.map((entry) => ({
+      ...entry,
+      answered: false,
+      points: 0,
+      options: entry.options.map((o) => ({ ...o, selected: false })),
+    }))
+
+    const view = renderRecapModal(untouched)
+    const questionBlocks = view.blocks.slice(2)
+
+    expect(sectionText(view.blocks[0])).toContain('*0.0 pts*')
+    expect(sectionText(view.blocks[0])).toContain('0/3 answered')
+    expect(questionBlocks).toHaveLength(3)
+    for (const block of questionBlocks) {
+      const text = sectionText(block)
+      expect(text).toContain('(no answer)')
+      expect(text).toContain('💡')
+      expect(text).not.toContain('✅')
+      expect(text).not.toContain('❌')
+    }
+  })
 })
 
 describe('renderFinalSummary recap button', () => {
@@ -233,6 +275,51 @@ describe('ChannelQuizzes retention', () => {
 
     expect(quizzes.running('C1')).toBe(quiz)
     quiz.abort()
+  })
+
+  describe('finished(channelId, messageTs)', () => {
+    it('returns the finished quiz whose message ts matches', async () => {
+      const quizzes = new ChannelQuizzes()
+      const quiz = newQuiz()
+      quizzes.replace('C1', quiz)
+      await quiz.startChannelQuiz('U1')
+      quiz.abort()
+
+      expect(quizzes.finished('C1', '1234567890.123')).toBe(quiz)
+    })
+
+    it('returns nothing when a newer quiz has replaced the one the button belongs to', async () => {
+      const quizzes = new ChannelQuizzes()
+      const first = newQuiz()
+      quizzes.replace('C1', first)
+      await first.startChannelQuiz('U1')
+      first.abort()
+
+      mockClient.chat.postMessage.mockResolvedValueOnce({ ok: true, ts: '9999999999.999' })
+      const second = newQuiz()
+      quizzes.replace('C1', second)
+      await second.startChannelQuiz('U1')
+      second.abort()
+
+      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
+      expect(quizzes.finished('C1', '9999999999.999')).toBe(second)
+    })
+
+    it('returns nothing when no quiz is retained for the channel', () => {
+      const quizzes = new ChannelQuizzes()
+
+      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
+    })
+
+    it('returns nothing while the retained quiz is still running', async () => {
+      const quizzes = new ChannelQuizzes()
+      const quiz = newQuiz()
+      quizzes.replace('C1', quiz)
+      await quiz.startChannelQuiz('U1')
+
+      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
+      quiz.abort()
+    })
   })
 
   it('discards a quiz only if it is still the channel\'s current one', () => {

@@ -102,9 +102,17 @@ app.action("recap", async ({ ack, body, client, respond, logger }) => {
     return;
   }
 
+  const action = body.actions[0]!;
+  if (action.type !== "button") {
+    logger.error("Unexpected action type", action.type);
+    return;
+  }
+
+  const messageTs = action.value;
   const channelId = body.channel?.id;
-  const quiz = channelId ? CHANNEL_QUIZZES.get(channelId) : undefined;
-  if (!quiz || !quiz.isFinished()) {
+  const quiz =
+    channelId && messageTs ? CHANNEL_QUIZZES.finished(channelId, messageTs) : undefined;
+  if (!quiz) {
     await respond({
       response_type: "ephemeral",
       text: "That quiz's recap is no longer available.",
