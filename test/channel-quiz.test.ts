@@ -48,7 +48,10 @@ describe('Channel Quiz Functionality', () => {
       mockLogger as any,
       mockStore as any,
       'C123456789', // channelId
-      onQuizEndCallback
+      onQuizEndCallback,
+      3,
+      undefined,
+      'https://trivia.test',
     )
   })
 
@@ -178,10 +181,10 @@ describe('Channel Quiz Functionality', () => {
       // This tests that userAnswers.clear() is called
     })
 
-    it('should update the channel countdown during the quiz', async () => {
+    it('should not edit the channel message while the question is open (GIF animates client-side)', async () => {
       ;(channelQuiz as any).state.question.timestamp = new Date(Date.now() - 1000)
       await new Promise(resolve => setTimeout(resolve, 150))
-      expect(mockClient.chat.update).toHaveBeenCalled()
+      expect(mockClient.chat.update).not.toHaveBeenCalled()
     })
 
     it('should update the channel message to results when time is up', async () => {

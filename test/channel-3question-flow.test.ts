@@ -51,7 +51,10 @@ describe('Channel Quiz - Full 3 Question Flow', () => {
       mockLogger as any,
       mockStore as any,
       'C123456789',
-      onQuizEnd
+      onQuizEnd,
+      3,
+      undefined,
+      'https://trivia.test',
     )
 
     console.log('\n=== Starting Channel Quiz ===')

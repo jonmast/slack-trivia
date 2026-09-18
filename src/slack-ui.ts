@@ -1,6 +1,15 @@
 import { HomeView, Block, KnownBlock } from "@slack/web-api"
 import { Question, UserScore } from "./trivia-core"
 
+export const OPTION_TEXT_MAX = 75
+
+export function optionLabel(text: string): string {
+  if (text.length <= OPTION_TEXT_MAX) {
+    return text
+  }
+  return `${text.substring(0, OPTION_TEXT_MAX - 1).trimEnd()}…`
+}
+
 export function renderQuestion(question: Question, countdown: number, disabled: boolean = false): HomeView {
   const block: any = {
     block_id: question.question.id,
@@ -19,7 +28,7 @@ export function renderQuestion(question: Question, countdown: number, disabled: 
         value: answer.id,
         text: {
           type: "plain_text",
-          text: answer.text.substring(0, 150),
+          text: optionLabel(answer.text),
         },
       })),
     }
@@ -61,7 +70,18 @@ export function renderResults(question: Question, userScores: UserScore[]): Home
   }
 }
 
-export function renderChannelQuestion(question: Question, countdown: number, current: number, total: number): (Block | KnownBlock)[] {
+/**
+ * Channel question message. The timer is an animated pie GIF in a context
+ * row: the message is rendered once when the question opens and never edited
+ * until time's up (any edit would restart the animation).
+ */
+export function renderChannelQuestion(
+  question: Question,
+  timeoutSecs: number,
+  current: number,
+  total: number,
+  countdownGifUrl: string,
+): (Block | KnownBlock)[] {
    // Block 0: Progress header
    const headerBlock = {
      type: "header",
@@ -77,7 +97,7 @@ export function renderChannelQuestion(question: Question, countdown: number, cur
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `🧠 *Trivia Question* (${countdown.toFixed(0)}s remaining)\n\n*${question.question.question.text}*`,
+      text: `🧠 *Trivia Question*\n\n*${question.question.question.text}*`,
     },
     accessory: {
       type: "radio_buttons",
@@ -86,16 +106,57 @@ export function renderChannelQuestion(question: Question, countdown: number, cur
         value: answer.id,
         text: {
           type: "plain_text",
-          text: answer.text.substring(0, 150),
+          text: optionLabel(answer.text),
         },
       })),
     },
   };
 
-  return [headerBlock, questionBlock];
+  // Block 2: countdown pie. An image *element* in a context block renders in a
+  // small square with none of the collapsible file chrome an image block gets.
+  const countdownBlock = {
+    type: "context",
+    elements: [
+      { type: "image", image_url: countdownGifUrl, alt_text: `${timeoutSecs} second countdown` },
+      { type: "mrkdwn", text: `⏱ ${timeoutSecs} seconds` },
+    ],
+  };
+  return [headerBlock, questionBlock, countdownBlock];
 }
 
-export function renderChannelResults(question: Question, userScores: UserScore[], current?: number, total?: number): (Block | KnownBlock)[] {
+/** How everyone answered, without naming anyone: per-option counts plus a tally. */
+export function renderAnswerBreakdown(question: Question): string {
+  const counts = new Map<string, number>()
+  for (const r of question.responses) counts.set(r.answerId, (counts.get(r.answerId) ?? 0) + 1)
+  const answered = question.responses.length
+  const correct = counts.get(question.correctAnswer.id) ?? 0
+
+  const rows = question.answers.map((a) => {
+    const isCorrect = a.id === question.correctAnswer.id
+    const n = counts.get(a.id) ?? 0
+    return `${isCorrect ? "✅" : "◻️"} ${isCorrect ? `*${a.text}*` : a.text} — ${n}`
+  })
+
+  const tally =
+    answered === 0
+      ? "_Nobody answered in time_"
+      : `_${correct} of ${answered} answered correctly_`
+
+  return `${rows.join("\n")}\n${tally}`
+}
+
+/**
+ * Per-question results. Rendered once when time's up; the countdown pie in the
+ * context row shows how long until the next question (or the final summary).
+ */
+export function renderChannelResults(
+  question: Question,
+  userScores: UserScore[],
+  current: number,
+  total: number,
+  nextSecs: number,
+  countdownGifUrl: string,
+): (Block | KnownBlock)[] {
   const sortedScores = userScores.sort((a, b) => b.score - a.score)
   const leaderboard = sortedScores
     .map(
@@ -103,24 +164,24 @@ export function renderChannelResults(question: Question, userScores: UserScore[]
     )
     .join("\n")
 
-  const headerBlock = (current && total)
-    ? {
-        type: "header",
-        block_id: `progress_${question.question.id}`,
-        text: {
-          type: "plain_text",
-          text: `Answer ${Math.min(current, total)}/${total}:`,
-        },
-      }
-    : undefined;
+  const isLast = current >= total
+  const next = isLast ? `🏁 Final results in ${nextSecs} seconds` : `⏭️ Next question in ${nextSecs} seconds`
 
-  const blocks = [
+  return [
+    {
+      type: "header",
+      block_id: `progress_${question.question.id}`,
+      text: {
+        type: "plain_text",
+        text: `Answer ${Math.min(current, total)}/${total}:`,
+      },
+    },
     {
       block_id: question.question.id,
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${question.question.question.text}*\n\n✅ *Correct answer:* ${question.correctAnswer.text}`,
+        text: `*${question.question.question.text}*\n\n${renderAnswerBreakdown(question)}`,
       },
     },
     {
@@ -130,11 +191,14 @@ export function renderChannelResults(question: Question, userScores: UserScore[]
         text: `🏆 *Current Leaderboard:*\n${leaderboard || "No scores yet"}`,
       },
     },
+    {
+      type: "context",
+      elements: [
+        { type: "image", image_url: countdownGifUrl, alt_text: `${nextSecs} second countdown` },
+        { type: "mrkdwn", text: next },
+      ],
+    },
   ]
-  if (headerBlock) {
-    return [headerBlock, ...blocks];
-  }
-  return blocks;
 }
 
 export function renderFinalSummary(userScores: UserScore[], totalQuestions: number): (Block | KnownBlock)[] {

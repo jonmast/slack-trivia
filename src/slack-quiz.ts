@@ -17,9 +17,10 @@ import {
   renderFinalSummary,
   renderFinalSummaryHome,
 } from "./slack-ui"
+import { countdownGifUrl } from "./countdown"
 
 /** How long the per-question results screen stays up before the next question. */
-export const RESULTS_SECS = 8
+export const RESULTS_SECS = 5
 /** Home tab only: brief "time's up" beat before revealing the answer. */
 const PROCESSING_MS = 1500
 const TICK_MS = 100
@@ -50,6 +51,8 @@ export class SlackQuiz {
     private onQuizEnd?: () => void,
     maxQuestions: number = 3,
     timeoutSecs: number = TIMEOUT_SECS,
+    /** Public base URL serving /countdown/:secs.gif (required in channel mode). */
+    private countdownBaseUrl?: string,
   ) {
     this.quiz = new Quiz(store, maxQuestions, timeoutSecs)
     this.timeoutSecs = timeoutSecs
@@ -193,6 +196,9 @@ export class SlackQuiz {
     if (!this.isChannelMode()) {
       throw new Error("Cannot start channel quiz without channel ID")
     }
+    if (!this.countdownBaseUrl) {
+      throw new Error("Channel quizzes need COUNTDOWN_BASE_URL so Slack can fetch the countdown timer.")
+    }
 
     await this.ensureQuestions()
     this.quiz.addUser(initiatorUserId)
@@ -200,26 +206,52 @@ export class SlackQuiz {
 
     const result = await this.client.chat.postMessage({
       channel: this.channelId!,
-      blocks: this.renderChannelQuestionBlocks(question, this.timeoutSecs),
-      text: `Trivia Question: ${question.question.question.text}`,
+      blocks: this.renderChannelQuestionBlocks(question),
+      text: this.channelText(question, false),
     })
 
     if (result.ok && result.ts) {
       this.messageTs = result.ts
+      this.startQuestionClock(question)
       this.state = { type: "question", question }
     } else {
       throw new Error("Failed to post channel question")
     }
   }
 
-  private renderChannelQuestionBlocks(question: Question, remaining: number) {
+  /**
+   * Start the answer window now that the message is actually in the channel.
+   * `createQuestion` stamps the question before the post round-trip, which
+   * silently shortens the window by API latency and desyncs it from the pie.
+   */
+  private startQuestionClock(question: Question): void {
+    question.timestamp = new Date()
+  }
+
+  private renderChannelQuestionBlocks(question: Question) {
     const { current, total } = this.quiz.getProgress()
-    return renderChannelQuestion(question, remaining, Math.min(current, total), total)
+    const gifUrl = countdownGifUrl(this.countdownBaseUrl!, this.timeoutSecs, question.question.id)
+    return renderChannelQuestion(question, this.timeoutSecs, Math.min(current, total), total, gifUrl)
   }
 
   private renderChannelResultsBlocks(question: Question) {
     const { current, total } = this.quiz.getProgress()
-    return renderChannelResults(question, this.quiz.getLeaderboard(), Math.min(current, total), total)
+    const gifUrl = countdownGifUrl(this.countdownBaseUrl!, RESULTS_SECS, `${question.question.id}-results`)
+    return renderChannelResults(
+      question,
+      this.quiz.getLeaderboard(),
+      Math.min(current, total),
+      total,
+      RESULTS_SECS,
+      gifUrl,
+    )
+  }
+
+  /** Notification / accessibility fallback for the current channel frame. */
+  private channelText(question: Question, results: boolean): string {
+    return results
+      ? `Answer: ${question.correctAnswer.text} — ${question.question.question.text}`
+      : `Trivia Question: ${question.question.question.text}`
   }
 
   private async updateChannelMessage(blocks: (Block | KnownBlock)[], text: string): Promise<void> {
@@ -249,16 +281,13 @@ export class SlackQuiz {
     }
 
     const question = this.state.question
-    const text = `Trivia Question: ${question.question.question.text}`
 
     if (this.state.type === "question" || this.state.type === "processing") {
-      const remaining = getRemainingTime(question, this.timeoutSecs)
-      if (remaining <= 0) {
-        this.state = { type: "results", question }
-        await this.updateChannelIfChanged(this.renderChannelResultsBlocks(question), text)
-        return
-      }
-      await this.updateChannelIfChanged(this.renderChannelQuestionBlocks(question, remaining), text)
+      // The client animates the countdown GIF; editing the message would
+      // restart it, so the question frame is left alone until time's up.
+      if (getRemainingTime(question, this.timeoutSecs) > 0) return
+      this.state = { type: "results", question }
+      await this.updateChannelIfChanged(this.renderChannelResultsBlocks(question), this.channelText(question, true))
       return
     }
 
@@ -267,7 +296,7 @@ export class SlackQuiz {
       await this.advance()
       return
     }
-    await this.updateChannelIfChanged(this.renderChannelResultsBlocks(question), text)
+    await this.updateChannelIfChanged(this.renderChannelResultsBlocks(question), this.channelText(question, true))
   }
 
   // ---------------------------------------------------------------------------
@@ -303,9 +332,10 @@ export class SlackQuiz {
           throw new Error("No message timestamp available for update")
         }
         await this.updateChannelMessage(
-          this.renderChannelQuestionBlocks(question, this.timeoutSecs),
-          `Trivia Question: ${question.question.question.text}`,
+          this.renderChannelQuestionBlocks(question),
+          this.channelText(question, false),
         )
+        this.startQuestionClock(question)
       }
 
       this.state = { type: "question", question }

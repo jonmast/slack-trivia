@@ -3,6 +3,7 @@ require("dotenv").config();
 import { App } from "@slack/bolt";
 import { TriviaStore, parseTs, parseQuizzoArgs } from "./src/trivia-core";
 import { SlackQuiz } from "./src/slack-quiz";
+import { COUNTDOWN_ROUTE_PATH, countdownRouteHandler } from "./src/countdown";
 
 // Socket Mode is the default whenever an app-level token is configured (local
 // dev). Set SLACK_SOCKET_MODE=false to force HTTP mode (e.g. Docker).
@@ -11,6 +12,11 @@ const isSocketMode =
     ? process.env.SLACK_SOCKET_MODE === "true"
     : !!process.env.SLACK_APP_TOKEN;
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+// Public base URL of this app (e.g. https://trivia.example.com). Channel
+// questions embed an animated countdown served from /countdown/:secs.gif and
+// Slack fetches it while posting, so this must be reachable from the internet.
+// Required for /quizzo; the Home tab quiz works without it.
+const countdownBaseUrl = process.env.COUNTDOWN_BASE_URL || undefined;
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -18,6 +24,10 @@ const app = new App({
   ...(isSocketMode
     ? { socketMode: true, appToken: process.env.SLACK_APP_TOKEN }
     : { port }),
+  // Served in both modes (SocketModeReceiver opens an HTTP listener for custom routes).
+  customRoutes: [
+    { path: COUNTDOWN_ROUTE_PATH, method: ["GET", "HEAD"], handler: countdownRouteHandler },
+  ],
 });
 
 const STORE = new TriviaStore();
@@ -98,6 +108,14 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   const channelId = command.channel_id;
   logger.info("/quizzo", { channel: channelId, user: command.user_id, text: command.text });
 
+  if (!countdownBaseUrl) {
+    await respond({
+      response_type: "ephemeral",
+      text: "Channel trivia isn't configured on this server (COUNTDOWN_BASE_URL is unset).",
+    });
+    return;
+  }
+
   const existing = CHANNEL_QUIZZES.get(channelId);
   if (existing && !existing.isFinished()) {
     await respond({
@@ -127,6 +145,7 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
     },
     numQuestions,
     timeoutSecs,
+    countdownBaseUrl,
   );
   CHANNEL_QUIZZES.set(channelId, channelQuiz);
 
@@ -170,5 +189,10 @@ app.event("app_home_opened", async ({ event, client, logger }) => {
   );
   app.logger.info(
     "📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel",
+  );
+  app.logger.info(
+    countdownBaseUrl
+      ? `⏱ Countdown GIFs served at ${countdownBaseUrl}/countdown/:secs.gif`
+      : "⚠️ COUNTDOWN_BASE_URL unset; /quizzo is disabled until it is",
   );
 })();

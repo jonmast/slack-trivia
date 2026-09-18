@@ -29,6 +29,7 @@ const makeStore = (available: number) => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const TIMEOUT = 5
+const BASE_URL = 'https://trivia.test'
 
 /** Age the current question so its answer window and results window have passed. */
 const expireResults = (quiz: SlackQuiz) => {
@@ -50,7 +51,7 @@ describe('SlackQuiz resilience (channel mode)', () => {
   it('refuses to start when the store cannot supply enough questions, without locking the channel', async () => {
     const client = makeClient()
     const onEnd = vi.fn()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(1) as any, 'C1', onEnd, 3, TIMEOUT)
+    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(1) as any, 'C1', onEnd, 3, TIMEOUT, BASE_URL)
 
     await expect(quiz.startChannelQuiz('U1')).rejects.toThrow(/Could not load enough trivia questions/)
     expect(client.chat.postMessage).not.toHaveBeenCalled()
@@ -65,7 +66,7 @@ describe('SlackQuiz resilience (channel mode)', () => {
     const onEnd = vi.fn()
     const store = makeStore(1)
     store.ensure.mockResolvedValue(true) // lie: claim 3 are available
-    const quiz = new SlackQuiz(client as any, logger as any, store as any, 'C1', onEnd, 3, TIMEOUT)
+    const quiz = new SlackQuiz(client as any, logger as any, store as any, 'C1', onEnd, 3, TIMEOUT, BASE_URL)
 
     await quiz.startChannelQuiz('U1')
     expireResults(quiz)
@@ -83,7 +84,7 @@ describe('SlackQuiz resilience (channel mode)', () => {
   it('ends the quiz gracefully if Slack rejects the next-question update', async () => {
     const client = makeClient()
     const onEnd = vi.fn()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', onEnd, 3, TIMEOUT)
+    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', onEnd, 3, TIMEOUT, BASE_URL)
 
     await quiz.startChannelQuiz('U1')
     client.chat.update.mockRejectedValue(new Error('ratelimited'))
@@ -97,18 +98,18 @@ describe('SlackQuiz resilience (channel mode)', () => {
 
   it('does not re-send an unchanged channel message every tick', async () => {
     const client = makeClient()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', undefined, 3, 30)
+    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', undefined, 3, 30, BASE_URL)
     await quiz.startChannelQuiz('U1')
     await sleep(1250)
-    // ~12 ticks; countdown text only changes once per second.
-    expect(client.chat.update.mock.calls.length).toBeLessThanOrEqual(2)
+    // ~12 ticks; the GIF animates client-side so the open question is never edited.
+    expect(client.chat.update).not.toHaveBeenCalled()
     quiz.abort()
   })
 
   it('calls onQuizEnd exactly once when the quiz completes', async () => {
     const client = makeClient()
     const onEnd = vi.fn()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', onEnd, 1, TIMEOUT)
+    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, 'C1', onEnd, 1, TIMEOUT, BASE_URL)
     await quiz.startChannelQuiz('U1')
     expireResults(quiz)
     await sleep(250)
