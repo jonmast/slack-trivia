@@ -1,5 +1,5 @@
-import { HomeView, Block, KnownBlock } from "@slack/web-api"
-import { Question, UserScore } from "./trivia-core"
+import { HomeView, Block, KnownBlock, ModalView } from "@slack/web-api"
+import { Question, UserScore, RecapQuestion, RecapOption } from "./trivia-core"
 
 export const OPTION_TEXT_MAX = 75
 
@@ -201,7 +201,7 @@ export function renderChannelResults(
   ]
 }
 
-export function renderFinalSummary(userScores: UserScore[], totalQuestions: number): (Block | KnownBlock)[] {
+export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): (Block | KnownBlock)[] {
   const sortedScores = userScores.sort((a, b) => b.score - a.score)
   const leaderboard = sortedScores
     .map(
@@ -224,7 +224,63 @@ export function renderFinalSummary(userScores: UserScore[], totalQuestions: numb
         text: `🏆 *Final Leaderboard:*\n${leaderboard || "No participants"}`,
       },
     },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          action_id: "recap",
+          text: { type: "plain_text", text: "📋 See your recap" },
+          value: messageTs,
+        },
+      ],
+    },
   ]
+}
+
+function recapMarker(option: RecapOption): string {
+  if (option.selected) return option.correct ? "✅" : "❌"
+  return option.correct ? "💡" : "•"
+}
+
+function recapPoints(entry: RecapQuestion): string {
+  return entry.answered ? `${entry.points.toFixed(1)} pts` : "(no answer)"
+}
+
+export function renderRecapModal(recap: RecapQuestion[]): ModalView {
+  const answered = recap.filter((entry) => entry.answered).length
+  const total = recap.reduce((sum, entry) => sum + entry.points, 0)
+
+  return {
+    type: "modal",
+    title: { type: "plain_text", text: "Your recap" },
+    close: { type: "plain_text", text: "Close" },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${total.toFixed(1)} pts* · ${answered}/${recap.length} answered`,
+        },
+      },
+      {
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: "✅ you picked, correct · ❌ you picked, wrong · 💡 correct, not picked" },
+        ],
+      },
+      ...recap.map((entry, index) => ({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            `*${index + 1}. ${entry.text}*  _${recapPoints(entry)}_`,
+            ...entry.options.map((option) => `${recapMarker(option)} ${option.text}`),
+          ].join("\n"),
+        },
+      })),
+    ],
+  }
 }
 
 export function renderFinalSummaryHome(userScores: UserScore[], totalQuestions: number): HomeView {

@@ -4,6 +4,8 @@ import { App } from "@slack/bolt";
 import { TriviaStore, parseTs, parseQuizzoArgs } from "./src/trivia-core";
 import { SlackQuiz } from "./src/slack-quiz";
 import { COUNTDOWN_ROUTE_PATH, countdownRouteHandler } from "./src/countdown";
+import { ChannelQuizzes } from "./src/channel-quizzes";
+import { renderRecapModal } from "./src/slack-ui";
 
 // Socket Mode is the default whenever an app-level token is configured (local
 // dev). Set SLACK_SOCKET_MODE=false to force HTTP mode (e.g. Docker).
@@ -34,16 +36,7 @@ const STORE = new TriviaStore();
 
 // One shared Home-tab quiz; everyone who opens the Home tab joins it.
 let HOME_QUIZ: SlackQuiz | undefined;
-// One quiz per channel.
-const CHANNEL_QUIZZES = new Map<string, SlackQuiz>();
-
-function cleanupChannelQuiz(channelId: string) {
-  const quiz = CHANNEL_QUIZZES.get(channelId);
-  if (quiz) {
-    CHANNEL_QUIZZES.delete(channelId);
-    quiz.abort();
-  }
-}
+const CHANNEL_QUIZZES = new ChannelQuizzes();
 
 app.action("radio_sel", async ({ ack, body, logger }) => {
   await ack();
@@ -69,8 +62,8 @@ app.action("radio_sel", async ({ ack, body, logger }) => {
 
   // Channel quiz: block_actions from a message carry the channel.
   if (channelId) {
-    const channelQuiz = CHANNEL_QUIZZES.get(channelId);
-    if (!channelQuiz || channelQuiz.isFinished()) {
+    const channelQuiz = CHANNEL_QUIZZES.running(channelId);
+    if (!channelQuiz) {
       logger.info(`Answer from ${userId} in ${channelId} but no active quiz`);
       return;
     }
@@ -102,6 +95,33 @@ app.action("radio_sel", async ({ ack, body, logger }) => {
   }
 });
 
+app.action("recap", async ({ ack, body, client, respond, logger }) => {
+  await ack();
+  if (body.type !== "block_actions") {
+    logger.error("Unrecognized event", body);
+    return;
+  }
+
+  const channelId = body.channel?.id;
+  const quiz = channelId ? CHANNEL_QUIZZES.get(channelId) : undefined;
+  if (!quiz || !quiz.isFinished()) {
+    await respond({
+      response_type: "ephemeral",
+      text: "That quiz's recap is no longer available.",
+    });
+    return;
+  }
+
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: renderRecapModal(quiz.getRecap(body.user.id)),
+    });
+  } catch (error) {
+    logger.error("Failed to open recap:", error);
+  }
+});
+
 app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   await ack();
 
@@ -116,8 +136,7 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
     return;
   }
 
-  const existing = CHANNEL_QUIZZES.get(channelId);
-  if (existing && !existing.isFinished()) {
+  if (CHANNEL_QUIZZES.running(channelId)) {
     await respond({
       response_type: "ephemeral",
       text: "A trivia quiz is already running in this channel! Please wait for it to finish.",
@@ -137,24 +156,22 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
     logger,
     STORE,
     channelId,
-    () => {
-      // Only clear the map entry if it's still this quiz.
-      if (CHANNEL_QUIZZES.get(channelId) === channelQuiz) {
-        CHANNEL_QUIZZES.delete(channelId);
-      }
-    },
+    // No onQuizEnd eviction: the finished quiz must stay in CHANNEL_QUIZZES
+    // so the final summary's Recap button can read it (see ChannelQuizzes).
+    undefined,
     numQuestions,
     timeoutSecs,
     countdownBaseUrl,
   );
-  CHANNEL_QUIZZES.set(channelId, channelQuiz);
+  CHANNEL_QUIZZES.replace(channelId, channelQuiz);
 
   try {
     await channelQuiz.startChannelQuiz(command.user_id);
   } catch (error) {
     logger.error("Error starting channel quiz:", error);
     // Don't leave the channel locked with a quiz that never started.
-    cleanupChannelQuiz(channelId);
+    CHANNEL_QUIZZES.discard(channelId, channelQuiz);
+    channelQuiz.abort();
     const detail = error instanceof Error ? error.message : "";
     await respond({
       response_type: "ephemeral",
@@ -188,7 +205,7 @@ app.event("app_home_opened", async ({ event, client, logger }) => {
       : `⚡️ Bolt app is running in HTTP mode on port ${port}!`,
   );
   app.logger.info(
-    "📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel",
+    "📝 Registered handlers: slash command /quizzo, event app_home_opened, actions radio_sel, recap",
   );
   app.logger.info(
     countdownBaseUrl

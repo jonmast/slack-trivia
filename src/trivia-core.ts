@@ -32,6 +32,19 @@ export type UserScore = {
   totalAnswered: number;
 };
 
+export type RecapOption = {
+  text: string;
+  selected: boolean;
+  correct: boolean;
+};
+
+export type RecapQuestion = {
+  text: string;
+  options: RecapOption[];
+  answered: boolean;
+  points: number;
+};
+
 export class QuizCompleteError extends Error {
   constructor() {
     super("Quiz has reached the maximum number of questions");
@@ -320,6 +333,16 @@ export class Quiz {
     );
   }
 
+  /** Points a response earns: base point plus speed bonus if correct, else 0. */
+  private pointsFor(
+    question: Question,
+    response: Pick<Response, "answerId" | "timestamp">,
+  ): number {
+    return isCorrectAnswer(question, response.answerId)
+      ? 1 + this.speedBonus(question, response.timestamp)
+      : 0;
+  }
+
   /**
    * Record a user's answer. When `questionId` is given the answer is credited
    * to that question (Slack may deliver a click after the question has already
@@ -353,32 +376,40 @@ export class Quiz {
 
     const userScore = this.state.userScores.get(userId);
 
+    const response: Response = { userId, answerId, timestamp };
+
     if (existingResponse && userScore) {
       // Changing an answer: refund whatever the previous answer earned.
-      if (isCorrectAnswer(question, existingResponse.answerId)) {
-        userScore.score -=
-          1 + this.speedBonus(question, existingResponse.timestamp);
-      }
-
-      question.responses[existingResponseIndex] = {
-        userId,
-        answerId,
-        timestamp,
-      };
+      userScore.score -= this.pointsFor(question, existingResponse);
+      question.responses[existingResponseIndex] = response;
     } else {
-      question.responses.push({ userId, answerId, timestamp });
+      question.responses.push(response);
     }
 
     const previous = this.state.userScores.get(userId);
-    const correct = isCorrectAnswer(question, answerId);
     this.state.userScores.set(userId, {
       userId,
-      score:
-        (previous?.score ?? 0) +
-        (correct ? 1 + this.speedBonus(question, timestamp) : 0),
+      score: (previous?.score ?? 0) + this.pointsFor(question, response),
       totalAnswered: (previous?.totalAnswered ?? 0) + (existingResponse ? 0 : 1),
     });
-    return correct;
+    return isCorrectAnswer(question, answerId);
+  }
+
+  /** A user's per-question account of the quiz so far, in question order. */
+  getRecap(userId: string): RecapQuestion[] {
+    return this.state.questions.map((question) => {
+      const response = question.responses.find((r) => r.userId === userId);
+      return {
+        text: question.question.question.text,
+        options: question.answers.map((answer) => ({
+          text: answer.text,
+          selected: response?.answerId === answer.id,
+          correct: isCorrectAnswer(question, answer.id),
+        })),
+        answered: !!response,
+        points: response ? this.pointsFor(question, response) : 0,
+      };
+    });
   }
 
   getCurrentQuestion(): Question | null {

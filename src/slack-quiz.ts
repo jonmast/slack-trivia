@@ -4,6 +4,7 @@ import {
   Quiz,
   TriviaStore,
   Question,
+  RecapQuestion,
   TIMEOUT_SECS,
   getRemainingTime,
   getElapsedTime,
@@ -77,6 +78,15 @@ export class SlackQuiz {
   /** True once the quiz has ended (completed, failed, or aborted). */
   isFinished(): boolean {
     return this.finished
+  }
+
+  /** The channel message hosting this quiz, once posted. */
+  getMessageTs(): string | undefined {
+    return this.messageTs
+  }
+
+  getRecap(userId: string): RecapQuestion[] {
+    return this.quiz.getRecap(userId)
   }
 
   abort() {
@@ -360,7 +370,7 @@ export class SlackQuiz {
       if (this.isChannelMode()) {
         if (this.messageTs) {
           await this.updateChannelMessage(
-            renderFinalSummary(leaderboard, totalQuestions),
+            renderFinalSummary(leaderboard, totalQuestions, this.messageTs),
             "🎉 Trivia quiz completed! Thanks for playing!",
           )
         }
