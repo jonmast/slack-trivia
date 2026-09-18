@@ -27,6 +27,8 @@ export const createMockQuestions = (count: number = 2): TriviaQuestion[] =>
 
 export const setupFetchMock = (questions: TriviaQuestion[] = createMockQuestions()) => {
   const mockResponse = {
+    ok: true,
+    status: 200,
     json: vi.fn().mockResolvedValue(questions)
   }
   global.fetch = vi.fn().mockResolvedValue(mockResponse)

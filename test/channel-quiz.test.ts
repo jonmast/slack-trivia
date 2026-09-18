@@ -178,11 +178,17 @@ describe('Channel Quiz Functionality', () => {
       // This tests that userAnswers.clear() is called
     })
 
-    it('should update channel message during quiz', async () => {
-      // Give some time for the update cycle
+    it('should update the channel countdown during the quiz', async () => {
+      ;(channelQuiz as any).state.question.timestamp = new Date(Date.now() - 1000)
       await new Promise(resolve => setTimeout(resolve, 150))
-
       expect(mockClient.chat.update).toHaveBeenCalled()
+    })
+
+    it('should update the channel message to results when time is up', async () => {
+      ;(channelQuiz as any).state.question.timestamp = new Date(Date.now() - 6000)
+      await new Promise(resolve => setTimeout(resolve, 150))
+      expect(mockClient.chat.update).toHaveBeenCalledTimes(1)
+      expect(mockClient.chat.update.mock.calls[0][0].blocks[0].text.text).toContain('Answer 1/3')
     })
   })
 
@@ -199,6 +205,7 @@ describe('Channel Quiz Functionality', () => {
       await channelQuiz.startChannelQuiz('U12345')
       
       mockClient.chat.update.mockRejectedValueOnce(new Error('Update failed'))
+      ;(channelQuiz as any).state.question.timestamp = new Date(Date.now() - 6000)
 
       // Should not throw, but should log error
       await new Promise(resolve => setTimeout(resolve, 150))

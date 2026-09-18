@@ -58,19 +58,73 @@ export type Question = {
 
 export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
+export const MAX_QUESTIONS = 20;
+export const MAX_TIMEOUT_SECS = 60;
 const TRIVIA_API_BASE_URL = "https://the-trivia-api.com/v2/questions";
+const TRIVIA_API_MAX_LIMIT = 50;
 
 async function fetchTriviaQuestions(limit?: number): Promise<TriviaQuestion[]> {
   try {
     const url = limit
-      ? `${TRIVIA_API_BASE_URL}?limit=${limit}`
+      ? `${TRIVIA_API_BASE_URL}?limit=${Math.min(limit, TRIVIA_API_MAX_LIMIT)}`
       : TRIVIA_API_BASE_URL;
     const response = await fetch(url);
-    return await response.json();
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error("Failed to fetch trivia questions:", error);
     return [];
   }
+}
+
+export type QuizzoArgs = { numQuestions: number; timeoutSecs: number };
+
+export const QUIZZO_USAGE =
+  "Usage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`";
+
+/**
+ * Parse `/quizzo [num_questions] [seconds]s` text. Returns an error string on
+ * invalid input so the caller can respond ephemerally.
+ */
+export function parseQuizzoArgs(
+  text: string,
+): { ok: true; args: QuizzoArgs } | { ok: false; error: string } {
+  const parts = (text ?? "").trim().split(/\s+/).filter(Boolean);
+  const args: QuizzoArgs = { numQuestions: 3, timeoutSecs: TIMEOUT_SECS };
+
+  if (parts.length > 0) {
+    const n = Number(parts[0]);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_QUESTIONS) {
+      return {
+        ok: false,
+        error: `Invalid number of questions. Please provide a number between 1 and ${MAX_QUESTIONS}.\n${QUIZZO_USAGE}`,
+      };
+    }
+    args.numQuestions = n;
+  }
+
+  if (parts.length > 1) {
+    const match = /^(\d+)s$/.exec(parts[1]);
+    const secs = match ? Number(match[1]) : NaN;
+    if (!match) {
+      return {
+        ok: false,
+        error: `Invalid time format. Seconds must be suffixed with 's'.\n${QUIZZO_USAGE}`,
+      };
+    }
+    if (secs < 1 || secs > MAX_TIMEOUT_SECS) {
+      return {
+        ok: false,
+        error: `Invalid timeout. Please provide seconds between 1 and ${MAX_TIMEOUT_SECS}.\n${QUIZZO_USAGE}`,
+      };
+    }
+    args.timeoutSecs = secs;
+  }
+
+  return { ok: true, args };
 }
 
 export function parseTs(ts: string): Date {
@@ -86,6 +140,7 @@ export function withId(text: string): Answer {
 
 export class TriviaStore {
   private cache: TriviaQuestion[] = [];
+  private inflight: Promise<void> | null = null;
 
   constructor() {
     this.fetchInitial();
@@ -96,14 +151,37 @@ export class TriviaStore {
     this.cache = this.cache.concat(questions);
   }
 
-  private async fetchMore() {
-    const questions = await fetchTriviaQuestions(10);
-    this.cache = this.cache.concat(questions);
+  /** Fetch more questions; concurrent calls share one in-flight request. */
+  private fetchMore(limit: number = 10): Promise<void> {
+    if (!this.inflight) {
+      this.inflight = fetchTriviaQuestions(limit)
+        .then((questions) => {
+          this.cache = this.cache.concat(questions);
+        })
+        .finally(() => {
+          this.inflight = null;
+        });
+    }
+    return this.inflight;
+  }
+
+  /**
+   * Make sure at least `count` questions are cached before a quiz starts, so a
+   * quiz never dies mid-way with an empty cache. Resolves false if the API
+   * couldn't supply enough questions.
+   */
+  async ensure(count: number): Promise<boolean> {
+    if (this.cache.length >= count) return true;
+    await this.fetchMore(Math.max(10, count - this.cache.length));
+    if (this.cache.length >= count) return true;
+    // One retry in case the first fetch was the constructor's initial fetch racing us.
+    await this.fetchMore(Math.max(10, count - this.cache.length));
+    return this.cache.length >= count;
   }
 
   get(): TriviaQuestion {
     if (this.cache.length < 3) {
-      this.fetchMore();
+      this.fetchMore().catch(() => {});
     }
     const question = this.cache.pop();
     if (!question) {
@@ -125,7 +203,13 @@ export function shuffleAnswers(
   correctAnswer: Answer,
   incorrectAnswers: Answer[],
 ): Answer[] {
-  return [correctAnswer, ...incorrectAnswers].sort(() => Math.random() - 0.5);
+  // Fisher-Yates: uniform shuffle (sort with a random comparator is biased).
+  const answers = [correctAnswer, ...incorrectAnswers];
+  for (let i = answers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [answers[i], answers[j]] = [answers[j], answers[i]];
+  }
+  return answers;
 }
 
 export function createQuestion(apiQuestion: TriviaQuestion): Question {
@@ -172,9 +256,15 @@ export function getElapsedTime(
 export class Quiz {
   private state: QuizState;
   private store: TriviaStore;
+  private timeoutSecs: number;
 
-  constructor(store: TriviaStore, maxQuestions: number = 3) {
+  constructor(
+    store: TriviaStore,
+    maxQuestions: number = 3,
+    timeoutSecs: number = TIMEOUT_SECS,
+  ) {
     this.store = store;
+    this.timeoutSecs = timeoutSecs;
     this.state = {
       users: new Set(),
       userScores: new Map(),
@@ -210,9 +300,7 @@ export class Quiz {
   }
 
   nextQuestion(): Question {
-    console.log('[Quiz] nextQuestion() called - current questions:', this.state.questions.length, 'max:', this.state.maxQuestions)
     if (this.state.questions.length >= this.state.maxQuestions) {
-      console.log('[Quiz] Throwing QuizCompleteError - reached max questions')
       throw new QuizCompleteError();
     }
 
@@ -220,27 +308,29 @@ export class Quiz {
     const question = createQuestion(apiQuestion);
     this.state.currentQuestion = question;
     this.state.questions.push(question);
-    console.log('[Quiz] Question added - total questions now:', this.state.questions.length)
 
     return question;
   }
 
+  private speedBonus(question: Question, answeredAt: Date): number {
+    const elapsed = getElapsedTime(question, answeredAt);
+    return Math.max(
+      0,
+      ((this.timeoutSecs - elapsed) / this.timeoutSecs) * SPEED_BONUS_MAX,
+    );
+  }
+
+  /**
+   * Record a user's answer. When `questionId` is given the answer is credited
+   * to that question (Slack may deliver a click after the question has already
+   * advanced); speed bonus floors at 0, so late answers score the base point.
+   */
   submitAnswer(
     userId: string,
     answerId: string,
     timestamp: Date,
     questionId?: string,
   ): boolean {
-    console.log(
-      "[Quiz] submitAnswer called - userId:",
-      userId,
-      "answerId:",
-      answerId,
-      "questionId:",
-      questionId,
-      "isActive:",
-      this.state.isActive,
-    );
     if (!this.state.isActive) {
       throw new Error("No active quiz");
     }
@@ -264,16 +354,10 @@ export class Quiz {
     const userScore = this.state.userScores.get(userId);
 
     if (existingResponse && userScore) {
+      // Changing an answer: refund whatever the previous answer earned.
       if (isCorrectAnswer(question, existingResponse.answerId)) {
-        const elapsedTime = getElapsedTime(
-          question,
-          existingResponse.timestamp,
-        );
-        const speedBonus = Math.max(
-          0,
-          ((TIMEOUT_SECS - elapsedTime) / TIMEOUT_SECS) * SPEED_BONUS_MAX,
-        );
-        userScore.score -= 1 + speedBonus;
+        userScore.score -=
+          1 + this.speedBonus(question, existingResponse.timestamp);
       }
 
       question.responses[existingResponseIndex] = {
@@ -285,30 +369,16 @@ export class Quiz {
       question.responses.push({ userId, answerId, timestamp });
     }
 
-    if (isCorrectAnswer(question, answerId)) {
-      const elapsedTime = getElapsedTime(question, timestamp);
-      const speedBonus = Math.max(
-        0,
-        ((TIMEOUT_SECS - elapsedTime) / TIMEOUT_SECS) * SPEED_BONUS_MAX,
-      );
-      this.state.userScores.set(userId, {
-        userId,
-        score: (this.state.userScores.get(userId)?.score ?? 0) + 1 + speedBonus,
-        totalAnswered: existingResponse
-          ? (this.state.userScores.get(userId)?.totalAnswered ?? 0)
-          : (this.state.userScores.get(userId)?.totalAnswered ?? 0) + 1,
-      });
-      return true;
-    } else {
-      this.state.userScores.set(userId, {
-        userId,
-        score: this.state.userScores.get(userId)?.score ?? 0,
-        totalAnswered: existingResponse
-          ? (this.state.userScores.get(userId)?.totalAnswered ?? 0)
-          : (this.state.userScores.get(userId)?.totalAnswered ?? 0) + 1,
-      });
-      return false;
-    }
+    const previous = this.state.userScores.get(userId);
+    const correct = isCorrectAnswer(question, answerId);
+    this.state.userScores.set(userId, {
+      userId,
+      score:
+        (previous?.score ?? 0) +
+        (correct ? 1 + this.speedBonus(question, timestamp) : 0),
+      totalAnswered: (previous?.totalAnswered ?? 0) + (existingResponse ? 0 : 1),
+    });
+    return correct;
   }
 
   getCurrentQuestion(): Question | null {
@@ -332,8 +402,11 @@ export class Quiz {
   }
 
   endQuiz(): void {
-    console.log("[Quiz] endQuiz() called - setting isActive = false");
     this.state.isActive = false;
+  }
+
+  getTimeoutSecs(): number {
+    return this.timeoutSecs;
   }
 
   getLeaderboard(): UserScore[] {

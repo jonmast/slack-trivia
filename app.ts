@@ -1,212 +1,174 @@
 require("dotenv").config();
 
 import { App } from "@slack/bolt";
-import { TriviaStore, parseTs } from "./src/trivia-core";
+import { TriviaStore, parseTs, parseQuizzoArgs } from "./src/trivia-core";
 import { SlackQuiz } from "./src/slack-quiz";
 
-// Helper function to clean up finished channel quizzes
-function cleanupChannelQuiz(channelId: string) {
-  const quiz = CHANNEL_QUIZZES.get(channelId);
-  if (quiz) {
-    quiz.abort();
-    CHANNEL_QUIZZES.delete(channelId);
-  }
-}
+// Socket Mode is the default whenever an app-level token is configured (local
+// dev). Set SLACK_SOCKET_MODE=false to force HTTP mode (e.g. Docker).
+const isSocketMode =
+  process.env.SLACK_SOCKET_MODE !== undefined
+    ? process.env.SLACK_SOCKET_MODE === "true"
+    : !!process.env.SLACK_APP_TOKEN;
+const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
-// Initializes your app with your bot token and signing secret
-const isSocketMode = process.env.SLACK_SOCKET_MODE === "true";
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   ...(isSocketMode
     ? { socketMode: true, appToken: process.env.SLACK_APP_TOKEN }
-    : { port: process.env.PORT ? Number(process.env.PORT) : 3000 }),
+    : { port }),
 });
 
 const STORE = new TriviaStore();
 
-let CURRENT_QUIZ: SlackQuiz;
-const CHANNEL_QUIZZES = new Map<string, SlackQuiz>(); // channelId -> SlackQuiz
+// One shared Home-tab quiz; everyone who opens the Home tab joins it.
+let HOME_QUIZ: SlackQuiz | undefined;
+// One quiz per channel.
+const CHANNEL_QUIZZES = new Map<string, SlackQuiz>();
 
-app.action("radio_sel", async ({ ack, body, logger, respond }) => {
-  if (body.type === "block_actions") {
-    await ack();
-    const action = body.actions[0]!;
-    if (action.type !== "radio_buttons") {
-      throw new Error("Unexpected action type");
-    }
-    const answer = action.selected_option?.value;
+function cleanupChannelQuiz(channelId: string) {
+  const quiz = CHANNEL_QUIZZES.get(channelId);
+  if (quiz) {
+    CHANNEL_QUIZZES.delete(channelId);
+    quiz.abort();
+  }
+}
 
-    if (!answer) {
-      throw new Error("No answer selected");
-    }
+app.action("radio_sel", async ({ ack, body, logger }) => {
+  await ack();
+  if (body.type !== "block_actions") {
+    logger.error("Unrecognized event", body);
+    return;
+  }
 
-    const userId = body.user.id;
-    const channelId = body.channel?.id;
-    const questionId = action.block_id;
+  const action = body.actions[0]!;
+  if (action.type !== "radio_buttons") {
+    logger.error("Unexpected action type", action.type);
+    return;
+  }
+  const answer = action.selected_option?.value;
+  if (!answer) {
+    return;
+  }
 
-    // Check if this is a channel quiz
-    if (channelId) {
-      const channelQuiz = CHANNEL_QUIZZES.get(channelId);
-      if (channelQuiz) {
-        try {
-          channelQuiz.submitAnswer(
-            userId,
-            answer,
-            parseTs(action.action_ts),
-            questionId,
-          );
-        } catch (error) {
-          logger.error("Error submitting channel answer:", error);
-          await respond({
-            response_type: "ephemeral",
-            text: "Error submitting your answer. Please try again.",
-          });
-        }
-        return;
-      }
+  const userId = body.user.id;
+  const channelId = body.channel?.id;
+  const questionId = action.block_id;
+  const answeredAt = parseTs(action.action_ts);
 
-      await respond({
-        response_type: "ephemeral",
-        text: "No active quiz found in this channel.",
-      });
-      return;
-    }
-
-    // Home tab quiz (no channel ID) - just log errors, can't respond
-    if (!CURRENT_QUIZ) {
-      logger.info("No active quiz for home tab answer submission");
+  // Channel quiz: block_actions from a message carry the channel.
+  if (channelId) {
+    const channelQuiz = CHANNEL_QUIZZES.get(channelId);
+    if (!channelQuiz || channelQuiz.isFinished()) {
+      logger.info(`Answer from ${userId} in ${channelId} but no active quiz`);
       return;
     }
 
     try {
-      CURRENT_QUIZ.submitAnswer(
+      const correct = channelQuiz.submitAnswer(
         userId,
         answer,
-        parseTs(action.action_ts),
+        answeredAt,
         questionId,
       );
+      logger.info(`Answer from ${userId} in ${channelId}: ${correct ? "correct" : "wrong"}`);
     } catch (error) {
-      logger.info(
-        "Home tab answer submission failed - quiz likely ended:",
-        error,
-      );
+      logger.error("Error submitting channel answer:", error);
     }
-  } else {
-    logger.error("Unrecognized event", body);
+    return;
+  }
+
+  // Home tab quiz: no channel and no response_url to talk back on.
+  if (!HOME_QUIZ || HOME_QUIZ.isFinished()) {
+    logger.info("No active home quiz for answer submission");
+    return;
+  }
+  try {
+    const correct = HOME_QUIZ.submitAnswer(userId, answer, answeredAt, questionId);
+    logger.info(`Home answer from ${userId}: ${correct ? "correct" : "wrong"}`);
+  } catch (error) {
+    logger.error("Home tab answer submission failed:", error);
   }
 });
 
 app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   await ack();
 
-  logger.info("🎯 /quizzo command received!", {
-    channel: command.channel_id,
-    user: command.user_id,
-    text: command.text,
-  });
+  const channelId = command.channel_id;
+  logger.info("/quizzo", { channel: channelId, user: command.user_id, text: command.text });
+
+  const existing = CHANNEL_QUIZZES.get(channelId);
+  if (existing && !existing.isFinished()) {
+    await respond({
+      response_type: "ephemeral",
+      text: "A trivia quiz is already running in this channel! Please wait for it to finish.",
+    });
+    return;
+  }
+
+  const parsed = parseQuizzoArgs(command.text);
+  if (!parsed.ok) {
+    await respond({ response_type: "ephemeral", text: parsed.error });
+    return;
+  }
+  const { numQuestions, timeoutSecs } = parsed.args;
+
+  const channelQuiz = new SlackQuiz(
+    client,
+    logger,
+    STORE,
+    channelId,
+    () => {
+      // Only clear the map entry if it's still this quiz.
+      if (CHANNEL_QUIZZES.get(channelId) === channelQuiz) {
+        CHANNEL_QUIZZES.delete(channelId);
+      }
+    },
+    numQuestions,
+    timeoutSecs,
+  );
+  CHANNEL_QUIZZES.set(channelId, channelQuiz);
 
   try {
-    const channelId = command.channel_id;
-
-    if (CHANNEL_QUIZZES.has(channelId)) {
-      await respond({
-        response_type: "ephemeral",
-        text: "A trivia quiz is already running in this channel! Please wait for it to finish.",
-      });
-      return;
-    }
-
-    const args = command.text
-      .trim()
-      .split(/\s+/)
-      .filter((arg: string) => arg.length > 0);
-
-    let numQuestions = 3;
-    let timeoutSecs = 5;
-
-    if (args.length > 0) {
-      const parsedQuestions = parseInt(args[0], 10);
-      if (
-        isNaN(parsedQuestions) ||
-        parsedQuestions < 1 ||
-        parsedQuestions > 20
-      ) {
-        await respond({
-          response_type: "ephemeral",
-          text: "Invalid number of questions. Please provide a number between 1 and 20.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
-        });
-        return;
-      }
-      numQuestions = parsedQuestions;
-    }
-
-    if (args.length > 1) {
-      const timeArg = args[1];
-      if (!timeArg.endsWith("s")) {
-        await respond({
-          response_type: "ephemeral",
-          text: "Invalid time format. Seconds must be suffixed with 's'.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
-        });
-        return;
-      }
-      const parsedSeconds = parseInt(timeArg.slice(0, -1), 10);
-      if (isNaN(parsedSeconds) || parsedSeconds < 1 || parsedSeconds > 60) {
-        await respond({
-          response_type: "ephemeral",
-          text: "Invalid timeout. Please provide seconds between 1 and 60.\nUsage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`",
-        });
-        return;
-      }
-      timeoutSecs = parsedSeconds;
-    }
-
-    const channelQuiz = new SlackQuiz(
-      client,
-      logger,
-      STORE,
-      channelId,
-      () => {
-        cleanupChannelQuiz(channelId);
-      },
-      numQuestions,
-      timeoutSecs,
-    );
-    CHANNEL_QUIZZES.set(channelId, channelQuiz);
-
     await channelQuiz.startChannelQuiz(command.user_id);
   } catch (error) {
     logger.error("Error starting channel quiz:", error);
+    // Don't leave the channel locked with a quiz that never started.
+    cleanupChannelQuiz(channelId);
+    const detail = error instanceof Error ? error.message : "";
     await respond({
       response_type: "ephemeral",
-      text: "Sorry, there was an error starting the trivia quiz. Please try again.",
+      text: `Sorry, there was an error starting the trivia quiz. ${detail}`.trim(),
     });
   }
 });
 
 app.event("app_home_opened", async ({ event, client, logger }) => {
+  // Fires for the Messages tab too; only the Home tab hosts the quiz.
+  if (event.tab !== "home") {
+    return;
+  }
+  logger.info("app_home_opened", { user: event.user });
   try {
-    if (CURRENT_QUIZ) {
-      CURRENT_QUIZ.abort();
+    if (!HOME_QUIZ || HOME_QUIZ.isFinished()) {
+      HOME_QUIZ = new SlackQuiz(client, logger, STORE);
     }
-    CURRENT_QUIZ = new SlackQuiz(client, logger, STORE);
-    await CURRENT_QUIZ.initialize(event.user);
+    await HOME_QUIZ.initialize(event.user);
   } catch (error) {
-    logger.error(error);
+    logger.error("Failed to initialize home quiz:", error);
   }
 });
 
 (async () => {
   await app.start();
 
-  if (isSocketMode) {
-    app.logger.info(`⚡️ Bolt app is running in Socket Mode!`);
-  } else {
-    app.logger.info(
-      `⚡️ Bolt app is running in HTTP mode on port ${process.env.PORT || 3000}!`,
-    );
-  }
   app.logger.info(
-    `📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel`,
+    isSocketMode
+      ? "⚡️ Bolt app is running in Socket Mode!"
+      : `⚡️ Bolt app is running in HTTP mode on port ${port}!`,
+  );
+  app.logger.info(
+    "📝 Registered handlers: slash command /quizzo, event app_home_opened, action radio_sel",
   );
 })();

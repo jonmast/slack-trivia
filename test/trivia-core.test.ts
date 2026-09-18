@@ -111,6 +111,8 @@ describe('TriviaStore', () => {
     store.addToCache([mockQuestions[0]]) // Add only one question
     
     const mockMoreResponse = {
+      ok: true,
+      status: 200,
       json: vi.fn().mockResolvedValue([mockQuestions[1]])
     }
     global.fetch = vi.fn().mockResolvedValue(mockMoreResponse)

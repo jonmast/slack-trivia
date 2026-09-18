@@ -20,7 +20,7 @@ describe('Channel UI Components', () => {
     it('should render channel question with radio buttons', () => {
 const blocks = renderChannelQuestion(mockQuestion, 30, 2, 10)
 
-       expect(blocks).toHaveLength(4)
+       expect(blocks).toHaveLength(2)
       
        // First block should be the header
        expect(blocks[0].type).toBe('header')
@@ -46,15 +46,13 @@ const blocks = renderChannelQuestion(mockQuestion, 30, 2, 10)
     })
 
     it('should show correct countdown in question text', () => {
-const blocks = renderChannelQuestion(mockQuestion, 15, 2, 10)
-      
-       expect((blocks[1] as any).text.text).toContain('15s remaining')
+      const blocks = renderChannelQuestion(mockQuestion, 15, 2, 10)
+      expect((blocks[1] as any).text.text).toContain('15s remaining')
     })
 
     it('should handle zero countdown', () => {
-const blocks = renderChannelQuestion(mockQuestion, 0, 2, 10)
-      
-       expect((blocks[1] as any).text.text).toContain('0s remaining')
+      const blocks = renderChannelQuestion(mockQuestion, 0, 2, 10)
+      expect((blocks[1] as any).text.text).toContain('0s remaining')
     })
   })
 
@@ -68,10 +66,10 @@ const blocks = renderChannelQuestion(mockQuestion, 0, 2, 10)
     it('should render results with leaderboard', () => {
       const blocks = renderChannelResults(mockQuestion, mockLeaderboard, 2, 3)
 
-      expect(blocks).toHaveLength(4)
+      expect(blocks).toHaveLength(3)
 
       // First block should be the progress header
-      expect(blocks[0].type).toBe('section')
+      expect(blocks[0].type).toBe('header')
       expect((blocks[0] as any).text.text).toContain('Answer 2/3:')
       // Second block should show correct answer
 expect(blocks[2].type).toBe('section')
@@ -83,6 +81,17 @@ expect(blocks[2].type).toBe('section')
       const blocks = renderChannelResults(mockQuestion, mockLeaderboard, 2, 3)
       
       expect((blocks[1] as any).text.text).toContain('Correct Answer')
+    })
+
+    it('should never emit whitespace-only text blocks (Slack rejects them)', () => {
+      const all = [
+        ...renderChannelQuestion(mockQuestion, 30, 2, 10),
+        ...renderChannelResults(mockQuestion, mockLeaderboard, 2, 3),
+      ]
+      for (const block of all as any[]) {
+        if (block.text) expect(block.text.text.trim().length).toBeGreaterThan(0)
+        for (const el of block.elements ?? []) expect(el.text.trim().length).toBeGreaterThan(0)
+      }
     })
 
     it('should format leaderboard positions correctly', () => {

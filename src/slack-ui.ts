@@ -92,24 +92,7 @@ export function renderChannelQuestion(question: Question, countdown: number, cur
     },
   };
 
-  // Block 2: Placeholder (no static answer list needed)
-  const answersBlock = {
-    type: "section",
-    text: { type: "mrkdwn", text: " " },
-  };
-
-  // Block 3: Context (placeholder)
-  const contextBlock = {
-    type: "context",
-    elements: [
-      {
-        type: "mrkdwn",
-        text: " ",
-      },
-    ],
-  };
-
-   return [headerBlock, questionBlock, answersBlock, contextBlock];
+  return [headerBlock, questionBlock];
 }
 
 export function renderChannelResults(question: Question, userScores: UserScore[], current?: number, total?: number): (Block | KnownBlock)[] {
@@ -122,11 +105,11 @@ export function renderChannelResults(question: Question, userScores: UserScore[]
 
   const headerBlock = (current && total)
     ? {
-        type: "section",
+        type: "header",
         block_id: `progress_${question.question.id}`,
         text: {
-          type: "mrkdwn",
-          text: `*Answer ${Math.min(current, total)}/${total}:*`,
+          type: "plain_text",
+          text: `Answer ${Math.min(current, total)}/${total}:`,
         },
       }
     : undefined;
@@ -147,16 +130,7 @@ export function renderChannelResults(question: Question, userScores: UserScore[]
         text: `🏆 *Current Leaderboard:*\n${leaderboard || "No scores yet"}`,
       },
     },
-    {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: " ",
-        },
-      ],
-    },
-   ]
+  ]
   if (headerBlock) {
     return [headerBlock, ...blocks];
   }
