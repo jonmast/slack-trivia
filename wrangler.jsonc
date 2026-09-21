@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "slack-trivia",
+  "main": "worker/index.ts",
+  "tsconfig": "./tsconfig.worker.json",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // One object per Slack channel, addressed by idFromName(channelId).
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNEL_OBJECT",
+        "class_name": "ChannelObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ChannelObject"]
+    }
+  ],
+  // Countdown GIFs are pre-rendered into ./public at build time and served
+  // from the same origin as the Slack request URL.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
+  // SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET are set with `wrangler secret put`.
+}

@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored); production values are set with `wrangler secret put`.
+SLACK_SIGNING_SECRET=
+SLACK_BOT_TOKEN=
+SLACK_LOGGING_LEVEL=DEBUG
