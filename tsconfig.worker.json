@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["worker/**/*.ts", "test/worker/**/*.ts"]
+  "include": ["worker/**/*.ts", "test/worker/**/*.ts", "src/gifenc.d.ts"]
 }

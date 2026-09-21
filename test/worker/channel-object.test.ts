@@ -1,49 +1,172 @@
-import { env } from 'cloudflare:test'
-import { describe, it, expect } from 'vitest'
+import { env, fetchMock } from 'cloudflare:test'
+import { describe, it, expect, beforeAll, afterEach } from 'vitest'
+
+const ORIGIN = 'https://example.com'
+const BOT_TOKEN = 'xoxb-test-token'
 
 function channelObject(channelId: string) {
   return env.CHANNEL_OBJECT.get(env.CHANNEL_OBJECT.idFromName(channelId))
 }
 
-describe('ChannelObject', () => {
-  it('echoes the parsed /quizzo arguments', async () => {
-    const reply = await channelObject('C123').startQuiz('C123', '3 10s')
+function triviaQuestion(id: string) {
+  return {
+    category: 'Test',
+    id,
+    correctAnswer: `Correct ${id}`,
+    incorrectAnswers: [`W1 ${id}`, `W2 ${id}`, `W3 ${id}`],
+    question: { text: `Question ${id}?` },
+    tags: ['test'],
+    type: 'text_choice' as const,
+    difficulty: 'easy' as const,
+    regions: ['US'],
+    isNiche: false,
+  }
+}
 
-    expect(reply.ok).toBe(true)
-    expect(reply.text).toBe(
-      "Ready: 3 questions with a 10s answer window. (Quiz logic isn't wired up yet.)",
-    )
+function interceptTrivia(count: number) {
+  const questions = Array.from({ length: count }, (_, i) => triviaQuestion(`q${i + 1}`))
+  fetchMock
+    .get('https://the-trivia-api.com')
+    .intercept({ path: /^\/v2\/questions/, method: 'GET' })
+    .reply(200, questions)
+  return questions
+}
+
+function interceptPostMessage(ts = '1234567890.0001') {
+  let body: Record<string, unknown> | undefined
+  fetchMock
+    .get('https://slack.com')
+    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .reply(200, (opts) => {
+      body = JSON.parse(opts.body as string)
+      return { ok: true, ts }
+    })
+  return () => body
+}
+
+describe('ChannelObject.startQuiz', () => {
+  beforeAll(() => {
+    fetchMock.activate()
+    fetchMock.disableNetConnect()
   })
 
-  it('falls back to the default arguments when none are given', async () => {
-    const reply = await channelObject('C123').startQuiz('C123', '')
+  afterEach(() => fetchMock.assertNoPendingInterceptors())
 
-    expect(reply.ok).toBe(true)
-    expect(reply.text).toContain('3 questions')
-    expect(reply.text).toContain('5s answer window')
+  it('parses args, posts the first question, and stores a running quiz', async () => {
+    interceptTrivia(3)
+    const getBody = interceptPostMessage('1234567890.0001')
+
+    const result = await channelObject('C1').startQuiz('C1', '3 10s', ORIGIN, BOT_TOKEN)
+
+    expect(result.ok).toBe(true)
+    expect(result.text).toBe('Quiz started!')
+    expect(result.messageTs).toBe('1234567890.0001')
+
+    // chat.postMessage should have been called with valid blocks.
+    const body = getBody()!
+    expect(body.channel).toBe('C1')
+    expect(Array.isArray(body.blocks)).toBe(true)
+    const blocks = body.blocks as any[]
+    expect(blocks).toHaveLength(3)
+    // Header: Question 1/3:
+    expect(blocks[0].type).toBe('header')
+    expect(blocks[0].text.text).toBe('Question 1/3:')
+    // Section: radio buttons with question ID as block_id
+    expect(blocks[1].type).toBe('section')
+    expect(blocks[1].block_id).toBe('q1')
+    expect(blocks[1].accessory.type).toBe('radio_buttons')
+    expect(blocks[1].accessory.action_id).toBe('radio_sel')
+    expect(blocks[1].accessory.options).toHaveLength(4)
+    // Context: countdown GIF derived from origin
+    expect(blocks[2].type).toBe('context')
+    expect(blocks[2].elements[0].type).toBe('image')
+    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/example\.com\/countdown\/10\.gif\?q=/)
   })
 
-  it('returns the parse error for a bad argument', async () => {
-    const reply = await channelObject('C123').startQuiz('C123', '3 10')
+  it('defaults to 3 questions and 5s when no args are given', async () => {
+    interceptTrivia(3)
+    const getBody = interceptPostMessage('1234567890.0002')
 
-    expect(reply.ok).toBe(false)
-    expect(reply.text).toContain("Seconds must be suffixed with 's'")
+    const result = await channelObject('C1').startQuiz('C1', '', ORIGIN, BOT_TOKEN)
+
+    expect(result.ok).toBe(true)
+    const body = getBody()!
+    const blocks = body.blocks as any[]
+    expect(blocks[0].text.text).toBe('Question 1/3:')
+    // Default 5s countdown
+    expect(blocks[2].elements[0].image_url).toMatch(/countdown\/5\.gif/)
   })
 
-  it('records its channel on first use', async () => {
-    const channel = channelObject('C999')
-    expect(await channel.getChannelId()).toBeNull()
+  it('returns the parse error for bad arguments', async () => {
+    const result = await channelObject('C1').startQuiz('C1', '999 10s', ORIGIN, BOT_TOKEN)
 
-    await channel.startQuiz('C999', '1 5s')
-
-    expect(await channel.getChannelId()).toBe('C999')
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('Invalid number of questions')
   })
 
-  it('keeps one object per channel', async () => {
-    await channelObject('CAAA').startQuiz('CAAA', '1 5s')
-    await channelObject('CBBB').startQuiz('CBBB', '1 5s')
+  it('refuses a second start while a quiz is running', async () => {
+    interceptTrivia(1)
+    interceptPostMessage('1111')
 
-    expect(await channelObject('CAAA').getChannelId()).toBe('CAAA')
-    expect(await channelObject('CBBB').getChannelId()).toBe('CBBB')
+    await channelObject('C2').startQuiz('C2', '1 5s', ORIGIN, BOT_TOKEN)
+
+    // Second call without intercepting new trivia/postMessage – should not fetch.
+    const result = await channelObject('C2').startQuiz('C2', '1 5s', ORIGIN, BOT_TOKEN)
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('already running')
+  })
+
+  it('fails when the Trivia API returns fewer questions than requested', async () => {
+    interceptTrivia(1) // request 3, get 1
+
+    const result = await channelObject('C3').startQuiz('C3', '3 10s', ORIGIN, BOT_TOKEN)
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('Could not load enough trivia questions')
+    // No chat.postMessage should have been attempted.
+  })
+
+  it('releases the channel when chat.postMessage fails', async () => {
+    interceptTrivia(2)
+    fetchMock
+      .get('https://slack.com')
+      .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+      .reply(200, { ok: false, error: 'channel_not_found' })
+
+    const result = await channelObject('C4').startQuiz('C4', '2 5s', ORIGIN, BOT_TOKEN)
+
+    expect(result.ok).toBe(false)
+    expect(result.text).toContain('Failed to post')
+
+    // Channel should not be locked: a second start is accepted.
+    interceptTrivia(1)
+    interceptPostMessage('2222')
+    const retry = await channelObject('C4').startQuiz('C4', '1 5s', ORIGIN, BOT_TOKEN)
+    expect(retry.ok).toBe(true)
+  })
+
+  it('derives the countdown GIF URL from the request origin', async () => {
+    interceptTrivia(1)
+    const getBody = interceptPostMessage('3333')
+
+    await channelObject('C5').startQuiz('C5', '1 5s', 'https://trivia.app', BOT_TOKEN)
+
+    const body = getBody()!
+    const blocks = body.blocks as any[]
+    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/trivia\.app\/countdown\/5\.gif/)
+  })
+
+  it('isolates quizzes across channels', async () => {
+    interceptTrivia(1)
+    interceptPostMessage('aaa')
+    await channelObject('CA').startQuiz('CA', '1 5s', ORIGIN, BOT_TOKEN)
+
+    interceptTrivia(1)
+    interceptPostMessage('bbb')
+    await channelObject('CB').startQuiz('CB', '1 5s', ORIGIN, BOT_TOKEN)
+
+    expect(await channelObject('CA').hasRunningQuiz()).toBe(true)
+    expect(await channelObject('CB').hasRunningQuiz()).toBe(true)
   })
 })

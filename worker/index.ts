@@ -11,6 +11,7 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
+    const origin = new URL(request.url).origin;
     const app = new SlackApp({
       env,
       routes: { events: SLACK_EVENTS_PATH },
@@ -23,11 +24,31 @@ export default {
         const channel = env.CHANNEL_OBJECT.get(
           env.CHANNEL_OBJECT.idFromName(channelId),
         );
-        const result = await channel.startQuiz(channelId, payload.text ?? "");
-        await context.respond({
-          response_type: "ephemeral",
-          text: result.text,
-        });
+        try {
+          const result = await channel.startQuiz(
+            channelId,
+            payload.text ?? "",
+            origin,
+            env.SLACK_BOT_TOKEN ?? "",
+          );
+          // On success the question is already posted in the channel;
+          // only send an ephemeral for errors so users aren't double-pinged.
+          if (!result.ok) {
+            await context.respond({
+              response_type: "ephemeral",
+              text: result.text,
+            });
+          }
+        } catch (error) {
+          const text =
+            error instanceof Error
+              ? error.message
+              : "An unexpected error occurred. Please try again.";
+          await context.respond({
+            response_type: "ephemeral",
+            text,
+          });
+        }
       },
     );
 

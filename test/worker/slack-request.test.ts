@@ -66,6 +66,34 @@ function interceptAuthTest() {
     .reply(200, { ok: true, team_id: 'T1', user_id: 'U0', bot_id: 'B0' })
 }
 
+/** The Trivia API request the DO makes when starting a quiz. */
+function interceptTrivia(count: number) {
+  const questions = Array.from({ length: count }, (_, i) => ({
+    category: 'Test',
+    id: `q${i + 1}`,
+    correctAnswer: `Correct ${i + 1}`,
+    incorrectAnswers: [`W1`, `W2`, `W3`],
+    question: { text: `Question ${i + 1}?` },
+    tags: ['test'],
+    type: 'text_choice' as const,
+    difficulty: 'easy' as const,
+    regions: ['US'],
+    isNiche: false,
+  }))
+  fetchMock
+    .get('https://the-trivia-api.com')
+    .intercept({ path: /^\/v2\/questions/, method: 'GET' })
+    .reply(200, questions)
+}
+
+/** The chat.postMessage the DO calls to post the first question. */
+function interceptPostMessage(ts = '1234567890.123') {
+  fetchMock
+    .get('https://slack.com')
+    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .reply(200, { ok: true, ts })
+}
+
 type Reply = { response_type?: string; text?: string }
 
 /** Captures the one message the lazy listener posts back to response_url. */
@@ -122,9 +150,11 @@ describe('Slack request handling', () => {
     expect(response.status).toBe(401)
   })
 
-  it('acks /quizzo and replies on response_url with the parsed arguments', async () => {
+  it('acks /quizzo and starts a real quiz via the DO', async () => {
     interceptAuthTest()
-    const replied = interceptResponseUrl()
+    interceptTrivia(3)
+    interceptPostMessage('1234567890.123')
+    // No response_url interceptor—on success the Worker sends no ephemeral.
 
     const ctx = createExecutionContext()
     const response = await worker.fetch(
@@ -136,11 +166,7 @@ describe('Slack request handling', () => {
     expect(response.status).toBe(200)
 
     await waitOnExecutionContext(ctx)
-
-    expect(replied()?.response_type).toBe('ephemeral')
-    expect(replied()?.text).toBe(
-      "Ready: 3 questions with a 10s answer window. (Quiz logic isn't wired up yet.)",
-    )
+    // The lazy listener ran and completed; no response_url call is made on success.
   })
 
   it('replies with the parse error for a bad argument', async () => {
@@ -155,7 +181,11 @@ describe('Slack request handling', () => {
     )
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
+    // The lazy listener fires after the ack via ctx.waitUntil(); give it time
+    // to complete the context.respond() call to response_url.
+    await new Promise((r) => setTimeout(r, 200))
 
+    expect(replied()?.response_type).toBe('ephemeral')
     expect(replied()?.text).toContain('Invalid number of questions')
   })
 })
