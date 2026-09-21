@@ -1,6 +1,11 @@
 import { defineWorkersProject } from '@cloudflare/vitest-pool-workers/config'
 import { defineConfig } from 'vitest/config'
 
+// Wrangler loads a local `.env` as dev vars, and every key the bindings below
+// don't happen to override reaches the worker under test: the Node app's `.env`
+// holds real Slack credentials. Tests get their env from `miniflare.bindings`.
+process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false'
+
 export default defineConfig({
   test: {
     projects: [

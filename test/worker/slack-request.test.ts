@@ -89,6 +89,15 @@ describe('Slack request handling', () => {
 
   afterEach(() => fetchMock.assertNoPendingInterceptors())
 
+  // Guards the isolation from local env files. A leaked key changes how the
+  // app behaves (an app token turns on Socket Mode, which skips signature
+  // verification) and can send live calls to Slack with real credentials.
+  it('runs on the test credentials, never a local env file', () => {
+    expect(env.SLACK_SIGNING_SECRET).toBe('test-signing-secret')
+    expect(env.SLACK_BOT_TOKEN).toBe('xoxb-test-token')
+    expect(env.SLACK_APP_TOKEN).toBeUndefined()
+  })
+
   it('rejects an unsigned request', async () => {
     const ctx = createExecutionContext()
     const response = await worker.fetch(
