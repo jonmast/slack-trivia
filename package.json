@@ -5,6 +5,11 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
+    "build:assets": "tsx scripts/render-countdown-assets.ts",
+    "predev": "pnpm build:assets",
+    "predeploy": "pnpm build:assets",
+    "pretest:run": "pnpm build:assets",
+    "pretest:worker": "pnpm build:assets",
     "start": "node dist/app.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

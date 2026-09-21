@@ -1,7 +1,7 @@
 node_modules
 .env
 dist
-assets/countdown
+public/countdown
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
