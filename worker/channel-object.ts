@@ -253,6 +253,43 @@ export class ChannelObject extends DurableObject<Env> {
     return { ok: true, text: "Quiz started!", messageTs };
   }
 
+  /**
+   * Record a participant's answer. The answer belongs to the question the
+   * block ID names, not to whatever the quiz is showing now, so a click
+   * delivered after the quiz advanced still counts for the question it was
+   * for; the speed bonus is measured from that question's stored start and
+   * floors at zero, so a late answer still earns the base point.
+   *
+   * Deliberately synchronous: nothing is awaited between the state change and
+   * the write, so the write coalesces into one transaction and the Durable
+   * Object's output gate holds the Slack ack until it commits.
+   */
+  submitAnswer(
+    userId: string,
+    answerId: string,
+    questionId: string,
+    answeredAt: number,
+  ): void {
+    const running = this.loadRunningQuiz();
+    if (!running) {
+      console.log(
+        `Answer from ${userId} for question ${questionId} but no running quiz; ignoring`,
+      );
+      return;
+    }
+
+    const { messageTs, record } = running;
+    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+    try {
+      quiz.submitAnswer(userId, answerId, new Date(answeredAt), questionId);
+    } catch (error) {
+      console.error(`Failed to record answer from ${userId}:`, error);
+      return;
+    }
+
+    this.save(messageTs, { ...record, ...quiz.toSnapshot() });
+  }
+
   // ---------------------------------------------------------------------------
   // Alarm-driven progression
   // ---------------------------------------------------------------------------

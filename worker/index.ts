@@ -52,6 +52,34 @@ export default {
       },
     );
 
+    app.action<"radio_buttons">(
+      { type: "radio_buttons", action_id: "radio_sel" },
+      // The answer is recorded in the ack handler, not a lazy one: the object's
+      // output gate holds this RPC's return until the write commits, so Slack
+      // cannot confirm a click whose answer was never stored.
+      async ({ payload }) => {
+        const action = payload.actions[0];
+        const answerId = action?.selected_option?.value;
+        // A click on the channel message carries its channel; anything else
+        // (a click in a view) has no quiz to belong to.
+        const channelId = "channel" in payload ? payload.channel?.id : undefined;
+        if (!answerId || !channelId) return "";
+
+        const channel = env.CHANNEL_OBJECT.get(
+          env.CHANNEL_OBJECT.idFromName(channelId),
+        );
+        await channel.submitAnswer(
+          payload.user.id,
+          answerId,
+          action.block_id,
+          // Slack's click time, not ours: the speed bonus must not be charged
+          // for delivery lag.
+          Number(action.action_ts) * 1000,
+        );
+        return "";
+      },
+    );
+
     return await app.run(request, ctx);
   },
 };
