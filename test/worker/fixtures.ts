@@ -128,6 +128,43 @@ export async function waitForCalls(
   }
 }
 
+/** Sign a body the way Slack does, so the worker's verification accepts it. */
+export async function signSlackBody(body: string, timestamp: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(env.SLACK_SIGNING_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`v0:${timestamp}:${body}`),
+  )
+  const hex = [...new Uint8Array(signature)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+  return `v0=${hex}`
+}
+
+/** A request to the worker's Slack events path, signed unless told otherwise. */
+export async function slackRequest(
+  path: string,
+  body: string,
+  signed = true,
+): Promise<Request> {
+  const timestamp = Math.floor(Date.now() / 1000).toString()
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+  }
+  if (signed) {
+    headers['x-slack-request-timestamp'] = timestamp
+    headers['x-slack-signature'] = await signSlackBody(body, timestamp)
+  }
+  return new Request(`${COUNTDOWN_ORIGIN}${path}`, { method: 'POST', headers, body })
+}
+
 /** Header text of a channel frame, e.g. `Question 2/3:` or `Answer 1/3:`. */
 export function headerText(blocks: any[]): string | undefined {
   return blocks.find((block) => block.type === 'header')?.text?.text

@@ -19,7 +19,7 @@ pnpm test
 ## Projects
 
 - **node** (`test/*.test.ts`) — the pure modules behind the current Node app: trivia rules and scoring, quiz snapshot round-trips, Slack UI rendering, countdown GIFs, and the quiz flow. Runs in a plain Node environment.
-- **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`: the `ChannelObject` Durable Object (argument parsing, SQLite channel bookkeeping, alarm-driven progression, answer recording and scoring), the Slack request handler (signature verification, `/quizzo` acknowledgement, and the `response_url` reply), and the pre-rendered countdown GIFs served through the `ASSETS` binding.
+- **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`: the `ChannelObject` Durable Object (argument parsing, SQLite channel bookkeeping, alarm-driven progression, answer recording and scoring), the Slack request handler (signature verification, `/quizzo` acknowledgement, the `response_url` reply, and the Recap button's modal), and the pre-rendered countdown GIFs served through the `ASSETS` binding.
 
 ## Alarm-driven tests
 

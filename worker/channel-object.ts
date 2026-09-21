@@ -7,6 +7,7 @@ import {
   type Question,
   type QuestionSource,
   type QuizSnapshot,
+  type RecapQuestion,
   type TriviaQuestion,
 } from "../src/trivia-core";
 import {
@@ -288,6 +289,33 @@ export class ChannelObject extends DurableObject<Env> {
     }
 
     this.save(messageTs, { ...record, ...quiz.toSnapshot() });
+  }
+
+  /**
+   * A participant's recap of the finished quiz hosted by `messageTs`.
+   *
+   * The lookup is by the quiz row's primary key — the timestamp of the message
+   * the quiz was played in, which is what the summary's Recap button carries —
+   * never by "the channel's latest quiz", so an old summary opens the quiz it
+   * belongs to. Rows are never deleted, so those buttons keep working.
+   *
+   * Returns null when no finished quiz is hosted by that message, and when the
+   * user never answered in it: neither has a recap to show.
+   */
+  getRecap(userId: string, messageTs: string): RecapQuestion[] | null {
+    const row = this.sql
+      .exec<{ state: string }>(
+        "SELECT state FROM quizzes WHERE message_ts = ? AND status = 'finished'",
+        messageTs,
+      )
+      .toArray()[0];
+    if (!row) return null;
+
+    const record: QuizRecord = JSON.parse(row.state);
+    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+    if (!quiz.getUserScore(userId)) return null;
+
+    return quiz.getRecap(userId);
   }
 
   // ---------------------------------------------------------------------------

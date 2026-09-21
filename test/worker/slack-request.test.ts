@@ -6,6 +6,7 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
+import { slackRequest } from './fixtures'
 
 const RESPONSE_URL_ORIGIN = 'https://hooks.slack.test'
 const RESPONSE_URL_PATH = '/commands/T1/123/abc'
@@ -21,41 +22,6 @@ function commandBody(text: string): string {
     response_url: `${RESPONSE_URL_ORIGIN}${RESPONSE_URL_PATH}`,
     trigger_id: '123.456.abc',
   }).toString()
-}
-
-async function sign(body: string, timestamp: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(env.SLACK_SIGNING_SECRET),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(`v0:${timestamp}:${body}`),
-  )
-  const hex = [...new Uint8Array(signature)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-  return `v0=${hex}`
-}
-
-async function slackRequest(body: string, signed = true): Promise<Request> {
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-  const headers: Record<string, string> = {
-    'content-type': 'application/x-www-form-urlencoded',
-  }
-  if (signed) {
-    headers['x-slack-request-timestamp'] = timestamp
-    headers['x-slack-signature'] = await sign(body, timestamp)
-  }
-  return new Request(`https://example.com${SLACK_EVENTS_PATH}`, {
-    method: 'POST',
-    headers,
-    body,
-  })
 }
 
 /** Slack's auth.test, called while authorizing every incoming request. */
@@ -129,7 +95,7 @@ describe('Slack request handling', () => {
   it('rejects an unsigned request', async () => {
     const ctx = createExecutionContext()
     const response = await worker.fetch(
-      await slackRequest(commandBody('3 10s'), false),
+      await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s'), false),
       env,
       ctx,
     )
@@ -140,7 +106,7 @@ describe('Slack request handling', () => {
 
   it('rejects a request signed with the wrong secret', async () => {
     const body = commandBody('3 10s')
-    const request = await slackRequest(body)
+    const request = await slackRequest(SLACK_EVENTS_PATH, body)
     request.headers.set('x-slack-signature', 'v0=deadbeef')
 
     const ctx = createExecutionContext()
@@ -158,7 +124,7 @@ describe('Slack request handling', () => {
 
     const ctx = createExecutionContext()
     const response = await worker.fetch(
-      await slackRequest(commandBody('3 10s')),
+      await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s')),
       env,
       ctx,
     )
@@ -175,7 +141,7 @@ describe('Slack request handling', () => {
 
     const ctx = createExecutionContext()
     const response = await worker.fetch(
-      await slackRequest(commandBody('999 10s')),
+      await slackRequest(SLACK_EVENTS_PATH, commandBody('999 10s')),
       env,
       ctx,
     )
