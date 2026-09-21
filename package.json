@@ -2,15 +2,12 @@
   "name": "slack-bolt-trivia",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
   "scripts": {
-    "build": "tsc",
     "build:assets": "tsx scripts/render-countdown-assets.ts",
     "predev": "pnpm build:assets",
     "predeploy": "pnpm build:assets",
     "pretest:run": "pnpm build:assets",
     "pretest:worker": "pnpm build:assets",
-    "start": "node dist/app.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
@@ -23,9 +20,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@slack/bolt": "^4.2.0",
-    "@slack/web-api": "^7.8.0",
-    "dotenv": "^16.4.7",
     "gifenc": "^1.0.3",
     "slack-cloudflare-workers": "^1.3.10"
   },

@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   MAX_TIMEOUT_SECS,
+  RESULTS_SECS,
   Quiz,
   QuizCompleteError,
   parseQuizzoArgs,
@@ -19,9 +20,6 @@ import { countdownGifUrl } from "../src/countdown";
 import type { Env } from "./env";
 
 const TRIVIA_API_URL = "https://the-trivia-api.com/v2/questions";
-
-/** How long the per-question results screen stays up before the next question. */
-const DEFAULT_RESULTS_SECS = 5;
 
 /**
  * The quiz cannot go on: the channel message is unusable, or there is no
@@ -534,7 +532,7 @@ export class ChannelObject extends DurableObject<Env> {
       Number.isInteger(configured) &&
       configured >= 1 &&
       configured <= MAX_TIMEOUT_SECS;
-    return valid ? configured : DEFAULT_RESULTS_SECS;
+    return valid ? configured : RESULTS_SECS;
   }
 
   private loadRunningQuiz(): {

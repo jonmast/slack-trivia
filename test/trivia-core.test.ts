@@ -1,43 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
-  parseTs,
   withId,
-  TriviaStore,
   shuffleAnswers,
   createQuestion,
   isCorrectAnswer,
   getRemainingTime,
   hasExpired,
   TIMEOUT_SECS,
-  SPEED_BONUS_MAX,
-  type TriviaQuestion,
-  type Answer
+  type TriviaQuestion
 } from '../src/trivia-core'
-import { createMockTriviaQuestion, createMockQuestions, setupTestEnvironment } from './test-utils'
-
-// Mock fetch globally
-global.fetch = vi.fn()
 
 describe('Utility Functions', () => {
-  describe('parseTs', () => {
-    it('should convert Slack timestamp to Date object', () => {
-      const ts = '1700000000.123456'
-      const result = parseTs(ts)
-      const expected = new Date(1700000000123)
-      
-      expect(result).toBeInstanceOf(Date)
-      expect(result.getTime()).toBe(expected.getTime())
-    })
-
-    it('should handle timestamps without decimal places', () => {
-      const ts = '1700000000'
-      const result = parseTs(ts)
-      const expected = new Date(1700000000000)
-      
-      expect(result.getTime()).toBe(expected.getTime())
-    })
-  })
-
   describe('withId', () => {
     it('should create Answer object with UUID and text', () => {
       const text = 'Test answer'
@@ -70,56 +43,6 @@ describe('Utility Functions', () => {
         expect(shuffled).toContain(answer)
       })
     })
-  })
-})
-
-describe('TriviaStore', () => {
-  const mockQuestions = createMockQuestions()
-
-  beforeEach(() => {
-    setupTestEnvironment()
-  })
-
-  it('should fetch questions on initialization', async () => {
-    new TriviaStore()
-    
-    expect(fetch).toHaveBeenCalledWith('https://the-trivia-api.com/v2/questions')
-  })
-
-  it('should return a question from cache', async () => {
-    const store = new TriviaStore()
-    
-    // Wait for initial fetch to complete
-    await new Promise(resolve => setTimeout(resolve, 10))
-    
-    // Add questions directly to test get functionality
-    store.addToCache(mockQuestions)
-    
-    const question = store.get()
-    expect(question).toBeDefined()
-    expect(mockQuestions).toContainEqual(question)
-  })
-
-  it('should throw error when no questions available', () => {
-    const store = new TriviaStore()
-    
-    expect(() => store.get()).toThrow('No questions available')
-  })
-
-  it('should fetch more questions when cache is low', async () => {
-    const store = new TriviaStore()
-    store.addToCache([mockQuestions[0]]) // Add only one question
-    
-    const mockMoreResponse = {
-      ok: true,
-      status: 200,
-      json: vi.fn().mockResolvedValue([mockQuestions[1]])
-    }
-    global.fetch = vi.fn().mockResolvedValue(mockMoreResponse)
-    
-    store.get() // This should trigger fetchMore
-    
-    expect(fetch).toHaveBeenCalledWith('https://the-trivia-api.com/v2/questions?limit=10')
   })
 })
 

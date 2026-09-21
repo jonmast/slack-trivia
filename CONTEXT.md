@@ -16,7 +16,7 @@ _Avoid_: player, member
 One multiple-choice prompt with four options, exactly one of which is correct, with an answer window of a fixed number of seconds.
 
 **Answer window**:
-The seconds during which an answer to a question earns a speed bonus. Answers arriving after it still count for the base point until the quiz ends: Slack delivery lag must never cost a participant their answer.
+The seconds from a question being posted during which an answer earns a speed bonus. It is soft: an answer arriving after it still counts for the base point, with no bonus, at any time until the quiz is finished, so Slack delivery lag never costs a participant their answer. Its end is also the absolute deadline the channel object sets an alarm for; when that alarm fires, results replace the question.
 _Avoid_: deadline, cutoff, timeout
 
 **Results**:
@@ -33,6 +33,10 @@ _Avoid_: review, results, scorecard, answer sheet
 
 **Speed bonus**:
 Extra fractional points awarded for a correct answer in proportion to how quickly it was given.
+
+**Channel object**:
+The Durable Object that owns one Slack channel's quiz: its stored state, its alarms and its calls to Slack. One per channel, addressed by channel ID. The only place quiz logic runs.
+_Avoid_: instance, actor, worker
 
 **Leaderboard**:
 Participants ranked by total points.

@@ -1,4 +1,4 @@
-import { Block, KnownBlock, ModalView } from "@slack/web-api"
+import type { AnyMessageBlock, AnyModalBlock, ModalView } from "slack-cloudflare-workers"
 import { Question, UserScore, RecapQuestion, RecapOption } from "./trivia-core"
 
 export const OPTION_TEXT_MAX = 75
@@ -21,7 +21,7 @@ export function renderChannelQuestion(
   current: number,
   total: number,
   countdownGifUrl: string,
-): (Block | KnownBlock)[] {
+): AnyMessageBlock[] {
    // Block 0: Progress header
    const headerBlock = {
      type: "header",
@@ -96,7 +96,7 @@ export function renderChannelResults(
   total: number,
   nextSecs: number,
   countdownGifUrl: string,
-): (Block | KnownBlock)[] {
+): AnyMessageBlock[] {
   const sortedScores = userScores.sort((a, b) => b.score - a.score)
   const leaderboard = sortedScores
     .map(
@@ -141,7 +141,7 @@ export function renderChannelResults(
   ]
 }
 
-export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): (Block | KnownBlock)[] {
+export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): AnyMessageBlock[] {
   const sortedScores = userScores.sort((a, b) => b.score - a.score)
   const leaderboard = sortedScores
     .map(
@@ -209,7 +209,7 @@ export function renderRecapModal(recap: RecapQuestion[]): ModalView {
           { type: "mrkdwn", text: "✅ you picked, correct · ❌ you picked, wrong · 💡 correct, not picked" },
         ],
       },
-      ...recap.map((entry, index) => ({
+      ...recap.map((entry, index): AnyModalBlock => ({
         type: "section",
         text: {
           type: "mrkdwn",

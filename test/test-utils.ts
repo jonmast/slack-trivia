@@ -1,5 +1,4 @@
-import { vi } from 'vitest'
-import type { TriviaQuestion } from '../src/trivia-core'
+import type { QuestionSource, TriviaQuestion } from '../src/trivia-core'
 
 export const createMockTriviaQuestion = (overrides: Partial<TriviaQuestion> = {}): TriviaQuestion => ({
   category: 'Test',
@@ -24,17 +23,10 @@ export const createMockQuestions = (count: number = 2): TriviaQuestion[] =>
     })
   )
 
-export const setupFetchMock = (questions: TriviaQuestion[] = createMockQuestions()) => {
-  const mockResponse = {
-    ok: true,
-    status: 200,
-    json: vi.fn().mockResolvedValue(questions)
+/** A QuestionSource serving the given questions in order, refilling with fresh ones if exhausted. */
+export const createQuestionSource = (questions: TriviaQuestion[] = createMockQuestions()): QuestionSource => {
+  const queue = [...questions]
+  return {
+    get: () => queue.shift() ?? createMockTriviaQuestion(),
   }
-  global.fetch = vi.fn().mockResolvedValue(mockResponse)
-  return { mockResponse, questions }
-}
-
-export const setupTestEnvironment = () => {
-  vi.clearAllMocks()
-  return setupFetchMock()
 }

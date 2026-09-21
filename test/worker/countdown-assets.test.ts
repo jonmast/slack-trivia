@@ -1,7 +1,6 @@
 import { env } from 'cloudflare:test'
 import { describe, it, expect } from 'vitest'
-import { MAX_TIMEOUT_SECS } from '../../src/trivia-core'
-import { RESULTS_SECS } from '../../src/slack-quiz'
+import { MAX_TIMEOUT_SECS, RESULTS_SECS } from '../../src/trivia-core'
 
 // The GIFs are pre-rendered into ./public by `pnpm build:assets` and served by
 // the static-assets binding, so these go through the real asset router rather

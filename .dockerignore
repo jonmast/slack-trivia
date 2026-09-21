@@ -1,9 +1,0 @@
-node_modules
-dist
-test
-.env
-.git
-.gitignore
-*.md
-*.test.ts
-vitest.config.*
