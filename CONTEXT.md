@@ -16,7 +16,11 @@ A user who has submitted at least one answer in a quiz.
 _Avoid_: player, member
 
 **Question**:
-One multiple-choice prompt with four options, exactly one of which is correct, open for a fixed number of seconds.
+One multiple-choice prompt with four options, exactly one of which is correct, with an answer window of a fixed number of seconds.
+
+**Answer window**:
+The seconds during which an answer to a question earns a speed bonus. Answers arriving after it still count for the base point until the quiz ends: Slack delivery lag must never cost a participant their answer.
+_Avoid_: deadline, cutoff, timeout
 
 **Results**:
 The screen shown after a question closes: the correct answer plus the current leaderboard.
