@@ -1,0 +1,6 @@
+# Countdown GIFs are immutable build output named by duration: a given
+# /countdown/<secs>.gif is byte-identical on every deploy, so it can be cached
+# hard. Without this the asset server sends `max-age=0, must-revalidate` and
+# Slack's image proxy revalidates on every question.
+/countdown/*
+  Cache-Control: public, max-age=86400

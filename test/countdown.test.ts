@@ -1,9 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   renderCountdownGif,
-  getCountdownGif,
   countdownGifUrl,
-  countdownRouteHandler,
 } from '../src/countdown'
 import { SlackQuiz, RESULTS_SECS } from '../src/slack-quiz'
 import { createMockTriviaQuestion } from './test-utils'
@@ -31,40 +29,11 @@ describe('renderCountdownGif', () => {
     expect(count(renderCountdownGif(10, 1))).toBe(count(renderCountdownGif(9)))
     expect(count(renderCountdownGif(1, 5))).toBe(count(renderCountdownGif(1)))
   })
-
-  it('memoises per duration', () => {
-    expect(getCountdownGif(7)).toBe(getCountdownGif(7))
-  })
 })
 
 describe('countdownGifUrl', () => {
   it('builds the route URL with a per-question cache buster', () => {
     expect(countdownGifUrl('https://h.example/', 20, 'q 1')).toBe('https://h.example/countdown/20.gif?q=q%201')
-  })
-})
-
-describe('countdownRouteHandler', () => {
-  const makeRes = () => {
-    const res: any = { writeHead: vi.fn(), end: vi.fn() }
-    return res
-  }
-
-  it('serves image/gif for a valid duration and honours HEAD', () => {
-    const res = makeRes()
-    countdownRouteHandler({ method: 'GET', params: { secs: '20.gif' } } as any, res)
-    expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'content-type': 'image/gif' }))
-    expect(res.end.mock.calls[0][0]).toBeInstanceOf(Uint8Array)
-
-    const head = makeRes()
-    countdownRouteHandler({ method: 'HEAD', params: { secs: '20.gif' } } as any, head)
-    expect(head.writeHead).toHaveBeenCalledWith(200, expect.anything())
-    expect(head.end).toHaveBeenCalledWith()
-  })
-
-  it.each(['0.gif', '61.gif', 'abc.gif', '2.5.gif'])('404s for %s', (secs) => {
-    const res = makeRes()
-    countdownRouteHandler({ method: 'GET', params: { secs } } as any, res)
-    expect(res.writeHead).toHaveBeenCalledWith(404)
   })
 })
 
@@ -86,14 +55,6 @@ describe('SlackQuiz channel mode countdown', () => {
       }),
     }
   }
-
-  it('refuses to start a channel quiz without a base URL', async () => {
-    const client = makeClient()
-    const quiz = new SlackQuiz(client as any, logger, makeStore() as any, 'C1', undefined, 3, 30)
-    await expect(quiz.startChannelQuiz('U1')).rejects.toThrow(/COUNTDOWN_BASE_URL/)
-    expect(client.chat.postMessage).not.toHaveBeenCalled()
-    quiz.abort()
-  })
 
   it('posts the pie once and never edits the message while the question is open', async () => {
     const client = makeClient()

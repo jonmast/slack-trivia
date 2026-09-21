@@ -1,41 +1,20 @@
 // Posts a throwaway "question" with a countdown GIF to a channel so the bar can
-// be eyeballed in a real Slack client. Uploads the GIF as a Slack file and
-// references it via `slack_file` (no public hosting needed).
+// be eyeballed in a real Slack client. The GIF is served from the Worker's
+// static assets and referenced by `image_url`, so a public base URL is required.
 //
-//   COUNTDOWN_BASE_URL=https://host npx tsx scripts/post-countdown-test.ts C0123456789 20
+//   npx tsx scripts/post-countdown-test.ts C0123456789 https://trivia.example.com 20
 require("dotenv").config();
 const { WebClient } = require("@slack/web-api");
-const { readFileSync } = require("node:fs");
-const { join } = require("node:path");
 
 async function main() {
-  const [channel, secsArg] = process.argv.slice(2);
+  const [channel, baseUrl, secsArg] = process.argv.slice(2);
   const secs = Number(secsArg ?? 20);
-  if (!channel) throw new Error("usage: post-countdown-test.ts <channelId> [secs]");
+  if (!channel || !baseUrl) throw new Error("usage: post-countdown-test.ts <channelId> <baseUrl> [secs]");
 
   const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-  const file = join(__dirname, "..", "assets", "countdown", `${secs}.gif`);
-
-  // COUNTDOWN_BASE_URL=https://host/countdown -> image_url (needs no scopes).
-  // Otherwise upload via files.uploadV2 and reference by slack_file (needs files:write).
-  let imageBlock: any;
-  if (process.env.COUNTDOWN_BASE_URL) {
-    const url = `${process.env.COUNTDOWN_BASE_URL}/${secs}.gif?q=${Date.now()}`;
-    imageBlock = { type: "image", image_url: url, alt_text: `${secs} second countdown` };
-    console.log(`using ${url}`);
-  } else {
-    const t0 = Date.now();
-    const upload = await client.filesUploadV2({
-      file: readFileSync(file),
-      filename: `countdown-${secs}.gif`,
-      title: `${secs}s countdown`,
-    });
-    const fileId = upload.files?.[0]?.files?.[0]?.id;
-    if (!fileId) throw new Error(`upload failed: ${JSON.stringify(upload)}`);
-    console.log(`uploaded ${fileId} in ${Date.now() - t0}ms`);
-    imageBlock = { type: "image", slack_file: { id: fileId }, alt_text: `${secs} second countdown` };
-    throw new Error("context image elements need image_url; set COUNTDOWN_BASE_URL");
-  }
+  const url = `${baseUrl.replace(/\/$/, "")}/countdown/${secs}.gif?q=${Date.now()}`;
+  const imageBlock = { type: "image", image_url: url, alt_text: `${secs} second countdown` };
+  console.log(`using ${url}`);
 
   const blocks = [
     { type: "header", text: { type: "plain_text", text: "Trivia · Question 1 of 3" } },

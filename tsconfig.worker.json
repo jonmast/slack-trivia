@@ -15,5 +15,7 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["worker/**/*.ts", "test/worker/**/*.ts", "src/gifenc.d.ts"]
+  // `src/types` carries the ambient module declarations for untyped packages
+  // (gifenc), which worker code reaches through the shared `src` modules.
+  "include": ["worker/**/*.ts", "test/worker/**/*.ts", "src/types/*.d.ts"]
 }

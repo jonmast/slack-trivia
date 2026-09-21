@@ -101,7 +101,7 @@ export class SlackQuiz {
 
   async startChannelQuiz(initiatorUserId: string): Promise<void> {
     if (!this.countdownBaseUrl) {
-      throw new Error("Channel quizzes need COUNTDOWN_BASE_URL so Slack can fetch the countdown timer.")
+      throw new Error("Channel quizzes need a public base URL for the countdown GIFs; run the Worker deployment.")
     }
 
     await this.ensureQuestions()

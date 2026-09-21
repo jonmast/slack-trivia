@@ -1,6 +1,4 @@
 import { GIFEncoder } from "gifenc"
-import type { IncomingMessage, ServerResponse } from "node:http"
-import { MAX_TIMEOUT_SECS } from "./trivia-core"
 
 /**
  * Countdown pie GIFs for the channel quiz.
@@ -13,8 +11,9 @@ import { MAX_TIMEOUT_SECS } from "./trivia-core"
  * file-preview chrome (an `image` block would get a collapsible header), which
  * is why the countdown is a pie rather than a bar.
  *
- * Slack fetches the image synchronously while posting, so the URL must be
- * publicly reachable and fast; a failed fetch fails the post.
+ * The GIFs are pre-rendered at build time and served by the Worker as static
+ * assets. Slack fetches the image synchronously while posting, so the URL must
+ * be publicly reachable and fast; a failed fetch fails the post.
  */
 
 const SIZE = 64
@@ -120,23 +119,10 @@ export function renderCountdownGif(secs: number, leadSecs: number = 0): Uint8Arr
 /**
  * Seconds shaved off the animation; see renderCountdownGif. Measured in a
  * real workspace: with no lead the pie still showed a sliver when the results
- * edit landed, so it runs half a second ahead of the server clock.
+ * edit landed, so it runs half a second ahead of the server clock. This fixed
+ * value is applied when the GIFs are rendered at build time.
  */
-export const COUNTDOWN_LEAD_SECS = Number(process.env.COUNTDOWN_LEAD_SECS ?? 0.5)
-
-const cache = new Map<number, Uint8Array>()
-
-/** Rendered GIF for `secs`, memoised per process. */
-export function getCountdownGif(secs: number): Uint8Array {
-  let gif = cache.get(secs)
-  if (!gif) {
-    gif = renderCountdownGif(secs, COUNTDOWN_LEAD_SECS)
-    cache.set(secs, gif)
-  }
-  return gif
-}
-
-export const COUNTDOWN_ROUTE_PATH = "/countdown/:secs"
+export const COUNTDOWN_LEAD_SECS = 0.5
 
 /**
  * URL for the countdown GIF. `cacheKey` (the question id) forces Slack's
@@ -144,28 +130,4 @@ export const COUNTDOWN_ROUTE_PATH = "/countdown/:secs"
  */
 export function countdownGifUrl(baseUrl: string, secs: number, cacheKey: string): string {
   return `${baseUrl.replace(/\/$/, "")}/countdown/${secs}.gif?q=${encodeURIComponent(cacheKey)}`
-}
-
-/** Bolt custom-route handler serving `/countdown/:secs.gif`. */
-export function countdownRouteHandler(
-  req: IncomingMessage & { params?: Record<string, string> },
-  res: ServerResponse,
-): void {
-  const secs = Number((req.params?.secs ?? "").replace(/\.gif$/, ""))
-  if (!Number.isInteger(secs) || secs < 1 || secs > MAX_TIMEOUT_SECS) {
-    res.writeHead(404)
-    res.end()
-    return
-  }
-  const gif = getCountdownGif(secs)
-  res.writeHead(200, {
-    "content-type": "image/gif",
-    "content-length": gif.length,
-    "cache-control": "public, max-age=86400",
-  })
-  if (req.method === "HEAD") {
-    res.end()
-    return
-  }
-  res.end(gif)
 }

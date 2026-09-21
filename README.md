@@ -9,6 +9,10 @@ The Worker currently only echoes the parsed `/quizzo` arguments back as an ephem
 - `app.ts` + `src/` — the current Node/Bolt app. The quiz logic lives here; it is being replaced by the Worker and will be removed.
 - `worker/` + `wrangler.jsonc` + `public/` — the Cloudflare Worker that replaces it. `worker/index.ts` is the entry point and handles Slack requests on `/slack/events` via `slack-cloudflare-workers` (no Bolt, no Socket Mode). `worker/channel-object.ts` is the SQLite-backed `ChannelObject` Durable Object, one per channel, bound as `CHANNEL_OBJECT`. Static assets from `public/` are served through the `ASSETS` binding.
 
+## Countdown GIFs
+
+Each question and results frame carries an animated countdown pie. The GIFs are pre-rendered by `pnpm build:assets` into `public/countdown/<secs>.gif` — one per answer window from 1s to the maximum, plus the results duration — and served as static assets from the Worker's own origin, so nothing is generated at request time and no separate image host is needed. `public/countdown/` is build output and is gitignored; `pnpm dev`, `pnpm run deploy` and the test scripts render it first.
+
 ## Develop
 
 ```bash
