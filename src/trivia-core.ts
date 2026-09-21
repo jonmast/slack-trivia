@@ -69,6 +69,45 @@ export type Question = {
   timestamp: Date;
 };
 
+/** Anything a quiz can draw its next trivia question from. */
+export type QuestionSource = {
+  get(): TriviaQuestion;
+};
+
+export const QUIZ_SNAPSHOT_VERSION = 1;
+
+export type ResponseSnapshot = {
+  userId: string;
+  answerId: string;
+  /** Epoch milliseconds; `Date` does not survive a JSON round-trip. */
+  at: number;
+};
+
+export type QuestionSnapshot = {
+  question: TriviaQuestion;
+  answers: Answer[];
+  correctAnswerId: string;
+  /** Epoch milliseconds the answer window started at. */
+  startedAt: number;
+  responses: ResponseSnapshot[];
+};
+
+/**
+ * A quiz as plain JSON: no `Date`, no `Map`, no `Set`, no class instances, so a
+ * caller can store it with `JSON.stringify` and rebuild it with
+ * `Quiz.fromSnapshot`.
+ */
+export type QuizSnapshot = {
+  version: number;
+  maxQuestions: number;
+  timeoutSecs: number;
+  isActive: boolean;
+  currentQuestionIndex: number | null;
+  questions: QuestionSnapshot[];
+  users: string[];
+  userScores: UserScore[];
+};
+
 export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
@@ -239,6 +278,42 @@ export function createQuestion(apiQuestion: TriviaQuestion): Question {
   };
 }
 
+function snapshotQuestion(question: Question): QuestionSnapshot {
+  return {
+    question: structuredClone(question.question),
+    answers: question.answers.map((answer) => ({ ...answer })),
+    correctAnswerId: question.correctAnswer.id,
+    startedAt: question.timestamp.getTime(),
+    responses: question.responses.map((response) => ({
+      userId: response.userId,
+      answerId: response.answerId,
+      at: response.timestamp.getTime(),
+    })),
+  };
+}
+
+function restoreQuestion(snapshot: QuestionSnapshot): Question {
+  const answers = snapshot.answers.map((answer) => ({ ...answer }));
+  const correctAnswer = answers.find(
+    (answer) => answer.id === snapshot.correctAnswerId,
+  );
+  if (!correctAnswer) {
+    throw new Error("Snapshot question has no correct answer");
+  }
+
+  return {
+    question: structuredClone(snapshot.question),
+    answers,
+    correctAnswer,
+    timestamp: new Date(snapshot.startedAt),
+    responses: snapshot.responses.map((response) => ({
+      userId: response.userId,
+      answerId: response.answerId,
+      timestamp: new Date(response.at),
+    })),
+  };
+}
+
 export function isCorrectAnswer(question: Question, answerId: string): boolean {
   return question.correctAnswer.id === answerId;
 }
@@ -268,11 +343,11 @@ export function getElapsedTime(
 
 export class Quiz {
   private state: QuizState;
-  private store: TriviaStore;
+  private store: QuestionSource;
   private timeoutSecs: number;
 
   constructor(
-    store: TriviaStore,
+    store: QuestionSource,
     maxQuestions: number = 3,
     timeoutSecs: number = TIMEOUT_SECS,
   ) {
@@ -286,6 +361,59 @@ export class Quiz {
       isActive: false,
       maxQuestions,
     };
+  }
+
+  /** The whole quiz as plain JSON, ready to be stored. */
+  toSnapshot(): QuizSnapshot {
+    const currentIndex = this.state.currentQuestion
+      ? this.state.questions.indexOf(this.state.currentQuestion)
+      : -1;
+
+    return {
+      version: QUIZ_SNAPSHOT_VERSION,
+      maxQuestions: this.state.maxQuestions,
+      timeoutSecs: this.timeoutSecs,
+      isActive: this.state.isActive,
+      currentQuestionIndex: currentIndex >= 0 ? currentIndex : null,
+      questions: this.state.questions.map(snapshotQuestion),
+      users: Array.from(this.state.users),
+      userScores: Array.from(this.state.userScores.values(), (score) => ({
+        ...score,
+      })),
+    };
+  }
+
+  /**
+   * Rebuild a quiz from a stored snapshot. The rebuilt quiz shares nothing with
+   * the snapshot, so mutating one never touches the other. Questions not yet
+   * asked are not part of a snapshot: the caller supplies the question source
+   * the rebuilt quiz draws the rest of its questions from.
+   */
+  static fromSnapshot(snapshot: QuizSnapshot, store: QuestionSource): Quiz {
+    if (snapshot.version !== QUIZ_SNAPSHOT_VERSION) {
+      throw new Error(`Unsupported quiz snapshot version ${snapshot.version}`);
+    }
+
+    const quiz = new Quiz(store, snapshot.maxQuestions, snapshot.timeoutSecs);
+    const questions = snapshot.questions.map(restoreQuestion);
+    const index = snapshot.currentQuestionIndex;
+    if (index !== null && !questions[index]) {
+      throw new Error(`Quiz snapshot has no question at index ${index}`);
+    }
+    const currentQuestion = index === null ? null : questions[index];
+
+    quiz.state = {
+      users: new Set(snapshot.users),
+      userScores: new Map(
+        snapshot.userScores.map((score) => [score.userId, { ...score }]),
+      ),
+      currentQuestion,
+      questions,
+      isActive: snapshot.isActive,
+      maxQuestions: snapshot.maxQuestions,
+    };
+
+    return quiz;
   }
 
   addUser(userId: string): void {
