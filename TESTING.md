@@ -23,5 +23,6 @@ pnpm test
 
 ## Conventions
 
-- External dependencies are faked at the network boundary: outbound `fetch` to Slack and The Trivia API, rather than the modules that call them.
 - Worker tests reach the Durable Object through its namespace binding and assert on what Slack would receive, not on storage rows.
+- External dependencies are faked at the network boundary: outbound `fetch` to Slack and The Trivia API is intercepted with `fetchMock` with net connect disabled, so an unmocked request fails the test rather than reaching the network.
+- Worker tests are isolated from local env files. Wrangler otherwise loads a `.env` from the repo root as dev vars, so the Node app's real credentials would reach the worker under test: any key the test config does not happen to override arrives untouched, and `SLACK_APP_TOKEN` alone turns on Socket Mode, which skips signature verification and makes live Slack calls with a real token. So `vitest.config.ts` sets `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false` and the worker project takes its Slack credentials from `miniflare.bindings` alone; a test asserts those fake values so a regression fails instead of leaking.
