@@ -1,50 +1,27 @@
 # Testing Setup
 
-This project now includes comprehensive tests using Vitest.
+Tests run with Vitest, configured as two projects in `vitest.config.ts`.
 
 ## Running Tests
 
 ```bash
-# Run tests in watch mode (default)
-pnpm test
-
-# Run tests once and exit
+# Run every project once
 pnpm test:run
+
+# Run just one project
+pnpm test:node
+pnpm test:worker
+
+# Watch mode (all projects, default)
+pnpm test
 ```
 
-## Test Structure
+## Projects
 
-- `test/trivia-core.test.ts` - Tests for core trivia game logic
-- `test/utils.test.ts` - Tests for utility functions
-- `test/slack-ui.test.ts` - Tests for Slack-specific rendering functions
+- **node** (`test/*.test.ts`) — the pure modules behind the current Node app: trivia rules and scoring, quiz snapshot round-trips, Slack UI rendering, countdown GIFs, and the quiz flow. Runs in a plain Node environment.
+- **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`: the `ChannelObject` Durable Object (argument parsing, SQLite channel bookkeeping) and the Slack request handler (signature verification, `/quizzo` acknowledgement, and the `response_url` reply).
 
-## Test Coverage
+## Conventions
 
-The tests cover:
-
-✅ **Utility Functions**
-- `parseTs()` - Slack timestamp parsing
-- `withId()` - Answer object creation with UUIDs
-
-✅ **TriviaStore Class** 
-- Question fetching and caching
-- Error handling for API failures
-- Cache management
-
-✅ **Question Logic**
-- Question creation and answer shuffling
-- Correct answer validation
-- Timeout and expiration logic
-
-✅ **Slack Integration**
-- Channel quiz rendering structures
-- Block kit formatting
-
-## Test Features
-
-- **Mocking**: External dependencies (fetch, Slack SDK) are mocked
-- **Async Testing**: Handles async operations properly  
-- **Error Cases**: Tests both success and failure scenarios
-- **Edge Cases**: Covers boundary conditions and edge cases
-
-All tests use Vitest with TypeScript support and are configured to run in a Node.js environment.
+- External dependencies are faked at the network boundary: outbound `fetch` to Slack and The Trivia API, rather than the modules that call them.
+- Worker tests reach the Durable Object through its namespace binding and assert on what Slack would receive, not on storage rows.
