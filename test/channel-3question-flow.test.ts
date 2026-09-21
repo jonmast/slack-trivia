@@ -7,10 +7,6 @@ const mockClient = {
     postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234567890.123' }),
     update: vi.fn().mockResolvedValue({ ok: true }),
   },
-  views: {
-    publish: vi.fn().mockResolvedValue({ ok: true, view: { id: 'view123' } }),
-    update: vi.fn().mockResolvedValue({ ok: true }),
-  },
 }
 
 const mockLogger = {
@@ -69,11 +65,11 @@ describe('Channel Quiz - Full 3 Question Flow', () => {
     // Simulate what updateChannelMessage does
     ;(channelQuiz as any).state.question.timestamp = new Date(Date.now() - (TIMEOUT_SECS + 2) * 1000)
     
-    // Wait for update cycle to detect timeout and transition to processing
+    // Wait for the tick to detect the expired answer window
     await new Promise(resolve => setTimeout(resolve, 200))
     console.log('After Q1 timeout, state:', (channelQuiz as any).state.type)
     
-    // Wait for processing -> results transition (1500ms delay)
+    // Wait for the results frame to be rendered
     await new Promise(resolve => setTimeout(resolve, 1600))
     expect((channelQuiz as any).state.type).toBe('results')
     console.log('Q1 results showing, state:', (channelQuiz as any).state.type)

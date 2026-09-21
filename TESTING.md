@@ -15,8 +15,8 @@ pnpm test:run
 ## Test Structure
 
 - `test/trivia-core.test.ts` - Tests for core trivia game logic
-- `test/utils.test.ts` - Tests for utility functions 
-- `test/slack-integration.test.ts` - Tests for Slack-specific rendering functions
+- `test/utils.test.ts` - Tests for utility functions
+- `test/slack-ui.test.ts` - Tests for Slack-specific rendering functions
 
 ## Test Coverage
 
@@ -37,7 +37,7 @@ The tests cover:
 - Timeout and expiration logic
 
 ✅ **Slack Integration**
-- HomeView rendering structures
+- Channel quiz rendering structures
 - Block kit formatting
 
 ## Test Features

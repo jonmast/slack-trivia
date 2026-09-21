@@ -8,10 +8,6 @@ const mockClient = {
     postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234567890.123' }),
     update: vi.fn().mockResolvedValue({ ok: true }),
   },
-  views: {
-    publish: vi.fn().mockResolvedValue({ ok: true, view: { id: 'view123' } }),
-    update: vi.fn().mockResolvedValue({ ok: true }),
-  },
 }
 
 const mockLogger = {
@@ -60,10 +56,6 @@ describe('Channel Quiz Functionality', () => {
   })
 
   describe('Channel Quiz Initialization', () => {
-    it('should identify as channel mode when channelId is provided', () => {
-      expect(channelQuiz.isChannelMode()).toBe(true)
-    })
-
     it('should start channel quiz and post initial message', async () => {
       await channelQuiz.startChannelQuiz('U12345')
 
@@ -72,20 +64,6 @@ describe('Channel Quiz Functionality', () => {
         blocks: expect.any(Array),
         text: expect.stringContaining('Trivia Question:')
       })
-    })
-
-    it('should throw error if starting channel quiz without channelId', async () => {
-      const homeQuiz = new SlackQuiz(
-        mockClient as any,
-        mockLogger as any,
-        mockStore as any // No channelId
-      )
-
-      await expect(homeQuiz.startChannelQuiz('U12345')).rejects.toThrow(
-        'Cannot start channel quiz without channel ID'
-      )
-
-      homeQuiz.abort()
     })
   })
 
@@ -218,30 +196,5 @@ describe('Channel Quiz Functionality', () => {
         expect.any(Error)
       )
     })
-  })
-})
-
-describe('Home Quiz vs Channel Quiz', () => {
-  it('should create home quiz without channelId', () => {
-    const homeQuiz = new SlackQuiz(
-      mockClient as any,
-      mockLogger as any,
-      mockStore as any
-    )
-
-    expect(homeQuiz.isChannelMode()).toBe(false)
-    homeQuiz.abort()
-  })
-
-  it('should create channel quiz with channelId', () => {
-    const channelQuiz = new SlackQuiz(
-      mockClient as any,
-      mockLogger as any,
-      mockStore as any,
-      'C123456789'
-    )
-
-    expect(channelQuiz.isChannelMode()).toBe(true)
-    channelQuiz.abort()
   })
 })

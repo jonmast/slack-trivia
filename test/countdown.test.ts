@@ -74,7 +74,6 @@ describe('SlackQuiz channel mode countdown', () => {
       postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1.2' }),
       update: vi.fn().mockResolvedValue({ ok: true }),
     },
-    views: { publish: vi.fn().mockResolvedValue({ ok: true }) },
   })
   const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() } as any
   const makeStore = () => {

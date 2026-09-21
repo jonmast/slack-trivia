@@ -7,10 +7,6 @@ const makeClient = () => ({
     postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234567890.123' }),
     update: vi.fn().mockResolvedValue({ ok: true }),
   },
-  views: {
-    publish: vi.fn().mockResolvedValue({ ok: true, view: { id: 'view123' } }),
-    update: vi.fn().mockResolvedValue({ ok: true }),
-  },
 })
 
 const makeLogger = () => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() })
@@ -118,43 +114,4 @@ describe('SlackQuiz resilience (channel mode)', () => {
     expect(onEnd).toHaveBeenCalledTimes(1)
   })
 
-})
-
-describe('SlackQuiz home tab mode', () => {
-  it('publishes (not updates) the home view for every participant', async () => {
-    const client = makeClient()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, undefined, undefined, 3, 30)
-    await quiz.initialize('U1')
-    await quiz.initialize('U2')
-
-    expect(client.views.publish).toHaveBeenCalledTimes(2)
-    expect(client.views.publish.mock.calls.map((c) => c[0].user_id)).toEqual(['U1', 'U2'])
-    expect(client.views.update).not.toHaveBeenCalled()
-
-    // Second user joined the *same* question rather than restarting.
-    expect((quiz as any).quiz.getQuestions()).toHaveLength(1)
-    expect((quiz as any).quiz.getUsers()).toEqual(['U1', 'U2'])
-
-    // Age the question by a second so the countdown changes -> one publish per user.
-    client.views.publish.mockClear()
-    ;(quiz as any).state.question.timestamp = new Date(Date.now() - 1000)
-    await sleep(150)
-    expect(client.views.publish).toHaveBeenCalledTimes(2)
-    expect(client.views.update).not.toHaveBeenCalled()
-    quiz.abort()
-  })
-
-  it('does not spam publishes while showing results', async () => {
-    const client = makeClient()
-    const quiz = new SlackQuiz(client as any, makeLogger() as any, makeStore(5) as any, undefined, undefined, 3, 1)
-    await quiz.initialize('U1')
-    // Expire the question: question -> processing (1.5s) -> results
-    ;(quiz as any).state.question.timestamp = new Date(Date.now() - 2000)
-    client.views.publish.mockClear()
-    await sleep(2200)
-    expect((quiz as any).state.type).toBe('results')
-    // One publish for "time's up", one for results. Not one per 100ms tick.
-    expect(client.views.publish.mock.calls.length).toBeLessThanOrEqual(3)
-    quiz.abort()
-  })
 })

@@ -8,9 +8,6 @@ A Slack bot that runs timed multiple-choice trivia quizzes in a channel and scor
 A quiz started with `/quizzo`, hosted in a single Slack message that is edited as the quiz progresses. The only supported surface.
 _Avoid_: game, session
 
-**Home quiz**:
-A quiz hosted on the app's Home tab. Deprecated; not extended with new features.
-
 **Participant**:
 A user who has submitted at least one answer in a quiz.
 _Avoid_: player, member
