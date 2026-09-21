@@ -1,6 +1,13 @@
-import { env, fetchMock } from 'cloudflare:test'
+import { fetchMock } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
-import type { TriviaQuestion } from '../../src/trivia-core'
+import {
+  COUNTDOWN_ORIGIN,
+  POST_MESSAGE_TS,
+  SLACK_BOT_TOKEN,
+  channelObject,
+  createTriviaQuestions,
+  interceptTrivia,
+} from './fixtures'
 
 /**
  * Issue #8: `/quizzo` starts a quiz — the ChannelObject fetches trivia
@@ -13,42 +20,7 @@ import type { TriviaQuestion } from '../../src/trivia-core'
  * so any unmocked request fails the test instead of reaching the network.
  */
 
-const SLACK_BOT_TOKEN = 'xoxb-test-token'
-const COUNTDOWN_ORIGIN = 'https://example.com'
-const POST_MESSAGE_TS = '1234567890.0001'
-
-function channelObject(channelId: string) {
-  return env.CHANNEL_OBJECT.get(env.CHANNEL_OBJECT.idFromName(channelId))
-}
-
-/** Questions as the Trivia API returns them; ids are `q-1`, `q-2`, ... */
-function createTriviaQuestions(count: number): TriviaQuestion[] {
-  return Array.from({ length: count }, (_, i) => ({
-    category: 'Test',
-    id: `q-${i + 1}`,
-    correctAnswer: 'Correct',
-    incorrectAnswers: ['W1', 'W2', 'W3'],
-    question: { text: 'Test question?' },
-    tags: ['test'],
-    type: 'text_choice',
-    difficulty: 'easy',
-    regions: ['US'],
-    isNiche: false,
-  }))
-}
-
 let postedBodies: Record<string, any>[] = []
-
-/**
- * The worker fetches `/v2/questions?limit=N`. A mock path matches the full
- * path *including* the query string, so the prefix is matched with a regex.
- */
-function interceptTrivia(questions: TriviaQuestion[]): void {
-  fetchMock
-    .get('https://the-trivia-api.com')
-    .intercept({ path: /^\/v2\/questions/, method: 'GET' })
-    .reply(200, questions)
-}
 
 /** One chat.postMessage reply per call; request bodies collect in `postedBodies`. */
 function interceptPostMessage(reply: object = { ok: true, ts: POST_MESSAGE_TS }): void {
@@ -87,13 +59,13 @@ function expectFirstQuestionBlocks(
   expect(blocks[1]).toMatchObject({
     block_id: questionId,
     type: 'section',
-    text: { type: 'mrkdwn', text: '🧠 *Trivia Question*\n\n*Test question?*' },
+    text: { type: 'mrkdwn', text: '🧠 *Trivia Question*\n\n*Question 1?*' },
     accessory: { type: 'radio_buttons', action_id: 'radio_sel' },
   })
 
   const options: any[] = blocks[1].accessory.options
   expect(options).toHaveLength(4)
-  expect(options.map((option) => option.text.text).sort()).toEqual(['Correct', 'W1', 'W2', 'W3'])
+  expect(options.map((option) => option.text.text).sort()).toEqual(['Correct 1', 'W1-1', 'W2-1', 'W3-1'])
   expect(new Set(options.map((option) => option.value)).size).toBe(4)
   for (const option of options) {
     expect(option.text).toMatchObject({ type: 'plain_text' })

@@ -23,6 +23,8 @@ export default defineConfig({
         test: {
           name: 'worker',
           include: ['test/worker/**/*.test.ts'],
+          // Alarm-driven tests wait out real answer windows.
+          testTimeout: 20_000,
           poolOptions: {
             workers: {
               wrangler: { configPath: './wrangler.jsonc' },
@@ -30,6 +32,9 @@ export default defineConfig({
                 bindings: {
                   SLACK_SIGNING_SECRET: 'test-signing-secret',
                   SLACK_BOT_TOKEN: 'xoxb-test-token',
+                  // A 1-second results window keeps alarm-driven flow tests
+                  // to a few seconds of real time.
+                  RESULTS_SECS: '1',
                 },
               },
             },
