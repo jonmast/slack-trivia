@@ -1,5 +1,6 @@
 import { SlackApp } from "slack-cloudflare-workers";
 import type { Env } from "./env";
+import { renderRecapModal } from "../src/slack-ui";
 
 export { ChannelObject } from "./channel-object";
 
@@ -76,6 +77,48 @@ export default {
           // for delivery lag.
           Number(action.action_ts) * 1000,
         );
+        return "";
+      },
+    );
+
+    app.action<"button">(
+      { type: "button", action_id: "recap" },
+      // Slack's trigger_id is only valid for a few seconds, so the modal is
+      // opened here rather than in a lazy listener.
+      async ({ context, payload }) => {
+        const action = payload.actions[0];
+        // The button carries the timestamp of the message its quiz was played
+        // in; that is the row's primary key, so an old summary opens its own
+        // quiz rather than the channel's latest.
+        const messageTs = action?.value;
+        const channelId = "channel" in payload ? payload.channel?.id : undefined;
+
+        const recap =
+          messageTs && channelId
+            ? await env.CHANNEL_OBJECT.get(
+                env.CHANNEL_OBJECT.idFromName(channelId),
+              ).getRecap(payload.user.id, messageTs)
+            : null;
+
+        if (!recap) {
+          await context.respond?.({
+            response_type: "ephemeral",
+            text: "That quiz's recap is no longer available.",
+          });
+          return "";
+        }
+
+        type OpenView = Parameters<typeof context.client.views.open>[0]["view"];
+        try {
+          await context.client.views.open({
+            trigger_id: payload.trigger_id,
+            // The shared renderer builds Slack's modal shape against
+            // `@slack/types`; the Workers client declares its own copy.
+            view: renderRecapModal(recap) as unknown as OpenView,
+          });
+        } catch (error) {
+          console.error("Failed to open recap:", error);
+        }
         return "";
       },
     );
