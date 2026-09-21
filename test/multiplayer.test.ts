@@ -1,20 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { TriviaStore, Quiz, SPEED_BONUS_MAX, QuizCompleteError, type TriviaQuestion } from '../src/trivia-core'
-import { createMockQuestions, setupTestEnvironment } from './test-utils'
-
-// Mock fetch globally
-global.fetch = vi.fn()
-
-const mockQuestions = createMockQuestions()
+import { describe, it, expect, beforeEach } from 'vitest'
+import { Quiz, SPEED_BONUS_MAX, QuizCompleteError, type QuestionSource } from '../src/trivia-core'
+import { createQuestionSource } from './test-utils'
 
 describe('Multiplayer functionality', () => {
-  let store: TriviaStore
+  let store: QuestionSource
   let quiz: Quiz
 
   beforeEach(() => {
-    setupTestEnvironment()
-    
-    store = new TriviaStore()
+    store = createQuestionSource()
     quiz = new Quiz(store)
   })
 

@@ -1,20 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { Quiz, TriviaStore, SPEED_BONUS_MAX, RecapQuestion } from '../src/trivia-core'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { Quiz, SPEED_BONUS_MAX, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
 import { renderRecapModal, renderFinalSummary } from '../src/slack-ui'
-import { SlackQuiz } from '../src/slack-quiz'
-import { ChannelQuizzes } from '../src/channel-quizzes'
-import { createMockQuestions, setupTestEnvironment } from './test-utils'
-
-global.fetch = vi.fn()
+import { createMockQuestions, createQuestionSource } from './test-utils'
 
 describe('Quiz.getRecap', () => {
-  let store: TriviaStore
+  let store: QuestionSource
   let quiz: Quiz
 
-  beforeEach(async () => {
-    setupTestEnvironment(createMockQuestions(3))
-    store = new TriviaStore()
-    await store.ensure(3)
+  beforeEach(() => {
+    store = createQuestionSource(createMockQuestions(3))
     quiz = new Quiz(store, 3, 10)
   })
 
@@ -232,109 +226,5 @@ describe('renderFinalSummary recap button', () => {
       action_id: 'recap',
       value: '1234567890.123',
     })
-  })
-})
-
-describe('ChannelQuizzes retention', () => {
-  const mockClient = {
-    chat: {
-      postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1234567890.123' }),
-      update: vi.fn().mockResolvedValue({ ok: true }),
-    },
-  }
-  const mockLogger = { info: vi.fn(), error: vi.fn(), debug: vi.fn() }
-  const mockStore = { get: vi.fn().mockReturnValue(createMockQuestions(1)[0]) }
-
-  const newQuiz = () =>
-    new SlackQuiz(mockClient as any, mockLogger as any, mockStore as any, 'C1', undefined, 1, undefined, 'https://trivia.test')
-
-  it('keeps a finished quiz reachable until the next one replaces it', async () => {
-    const quizzes = new ChannelQuizzes()
-    const first = newQuiz()
-    quizzes.replace('C1', first)
-    await first.startChannelQuiz('U1')
-    first.abort()
-
-    expect(first.isFinished()).toBe(true)
-    expect(quizzes.get('C1')).toBe(first)
-    expect(quizzes.running('C1')).toBeUndefined()
-    expect(first.getMessageTs()).toBe('1234567890.123')
-    expect(first.getRecap('U1')).toHaveLength(1)
-
-    const second = newQuiz()
-    quizzes.replace('C1', second)
-    expect(quizzes.get('C1')).toBe(second)
-    second.abort()
-  })
-
-  it('reports a running quiz', async () => {
-    const quizzes = new ChannelQuizzes()
-    const quiz = newQuiz()
-    quizzes.replace('C1', quiz)
-    await quiz.startChannelQuiz('U1')
-
-    expect(quizzes.running('C1')).toBe(quiz)
-    quiz.abort()
-  })
-
-  describe('finished(channelId, messageTs)', () => {
-    it('returns the finished quiz whose message ts matches', async () => {
-      const quizzes = new ChannelQuizzes()
-      const quiz = newQuiz()
-      quizzes.replace('C1', quiz)
-      await quiz.startChannelQuiz('U1')
-      quiz.abort()
-
-      expect(quizzes.finished('C1', '1234567890.123')).toBe(quiz)
-    })
-
-    it('returns nothing when a newer quiz has replaced the one the button belongs to', async () => {
-      const quizzes = new ChannelQuizzes()
-      const first = newQuiz()
-      quizzes.replace('C1', first)
-      await first.startChannelQuiz('U1')
-      first.abort()
-
-      mockClient.chat.postMessage.mockResolvedValueOnce({ ok: true, ts: '9999999999.999' })
-      const second = newQuiz()
-      quizzes.replace('C1', second)
-      await second.startChannelQuiz('U1')
-      second.abort()
-
-      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
-      expect(quizzes.finished('C1', '9999999999.999')).toBe(second)
-    })
-
-    it('returns nothing when no quiz is retained for the channel', () => {
-      const quizzes = new ChannelQuizzes()
-
-      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
-    })
-
-    it('returns nothing while the retained quiz is still running', async () => {
-      const quizzes = new ChannelQuizzes()
-      const quiz = newQuiz()
-      quizzes.replace('C1', quiz)
-      await quiz.startChannelQuiz('U1')
-
-      expect(quizzes.finished('C1', '1234567890.123')).toBeUndefined()
-      quiz.abort()
-    })
-  })
-
-  it('discards a quiz only if it is still the channel\'s current one', () => {
-    const quizzes = new ChannelQuizzes()
-    const first = newQuiz()
-    const second = newQuiz()
-    quizzes.replace('C1', first)
-    quizzes.replace('C1', second)
-
-    quizzes.discard('C1', first)
-    expect(quizzes.get('C1')).toBe(second)
-
-    quizzes.discard('C1', second)
-    expect(quizzes.get('C1')).toBeUndefined()
-    first.abort()
-    second.abort()
   })
 })

@@ -112,25 +112,8 @@ export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
 export const MAX_TIMEOUT_SECS = 60;
-const TRIVIA_API_BASE_URL = "https://the-trivia-api.com/v2/questions";
-const TRIVIA_API_MAX_LIMIT = 50;
-
-async function fetchTriviaQuestions(limit?: number): Promise<TriviaQuestion[]> {
-  try {
-    const url = limit
-      ? `${TRIVIA_API_BASE_URL}?limit=${Math.min(limit, TRIVIA_API_MAX_LIMIT)}`
-      : TRIVIA_API_BASE_URL;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.error("Failed to fetch trivia questions:", error);
-    return [];
-  }
-}
+/** How long the per-question results screen stays up before the next question. */
+export const RESULTS_SECS = 5;
 
 export type QuizzoArgs = { numQuestions: number; timeoutSecs: number };
 
@@ -179,76 +162,11 @@ export function parseQuizzoArgs(
   return { ok: true, args };
 }
 
-export function parseTs(ts: string): Date {
-  return new Date(Number(ts) * 1000);
-}
-
 export function withId(text: string): Answer {
   return {
     id: crypto.randomUUID(),
     text,
   };
-}
-
-export class TriviaStore {
-  private cache: TriviaQuestion[] = [];
-  private inflight: Promise<void> | null = null;
-
-  constructor() {
-    this.fetchInitial();
-  }
-
-  private async fetchInitial() {
-    const questions = await fetchTriviaQuestions();
-    this.cache = this.cache.concat(questions);
-  }
-
-  /** Fetch more questions; concurrent calls share one in-flight request. */
-  private fetchMore(limit: number = 10): Promise<void> {
-    if (!this.inflight) {
-      this.inflight = fetchTriviaQuestions(limit)
-        .then((questions) => {
-          this.cache = this.cache.concat(questions);
-        })
-        .finally(() => {
-          this.inflight = null;
-        });
-    }
-    return this.inflight;
-  }
-
-  /**
-   * Make sure at least `count` questions are cached before a quiz starts, so a
-   * quiz never dies mid-way with an empty cache. Resolves false if the API
-   * couldn't supply enough questions.
-   */
-  async ensure(count: number): Promise<boolean> {
-    if (this.cache.length >= count) return true;
-    await this.fetchMore(Math.max(10, count - this.cache.length));
-    if (this.cache.length >= count) return true;
-    // One retry in case the first fetch was the constructor's initial fetch racing us.
-    await this.fetchMore(Math.max(10, count - this.cache.length));
-    return this.cache.length >= count;
-  }
-
-  get(): TriviaQuestion {
-    if (this.cache.length < 3) {
-      this.fetchMore().catch(() => {});
-    }
-    const question = this.cache.pop();
-    if (!question) {
-      throw new Error("No questions available");
-    }
-    return question;
-  }
-
-  getCacheSize(): number {
-    return this.cache.length;
-  }
-
-  addToCache(questions: TriviaQuestion[]): void {
-    this.cache = this.cache.concat(questions);
-  }
 }
 
 export function shuffleAnswers(

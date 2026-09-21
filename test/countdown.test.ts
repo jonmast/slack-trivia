@@ -1,12 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   renderCountdownGif,
   countdownGifUrl,
 } from '../src/countdown'
-import { SlackQuiz, RESULTS_SECS } from '../src/slack-quiz'
-import { createMockTriviaQuestion } from './test-utils'
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 describe('renderCountdownGif', () => {
   it('produces a GIF89a with the expected frame count and no loop', () => {
@@ -34,74 +30,5 @@ describe('renderCountdownGif', () => {
 describe('countdownGifUrl', () => {
   it('builds the route URL with a per-question cache buster', () => {
     expect(countdownGifUrl('https://h.example/', 20, 'q 1')).toBe('https://h.example/countdown/20.gif?q=q%201')
-  })
-})
-
-describe('SlackQuiz channel mode countdown', () => {
-  const makeClient = () => ({
-    chat: {
-      postMessage: vi.fn().mockResolvedValue({ ok: true, ts: '1.2' }),
-      update: vi.fn().mockResolvedValue({ ok: true }),
-    },
-  })
-  const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() } as any
-  const makeStore = () => {
-    let n = 0
-    return {
-      ensure: vi.fn().mockResolvedValue(true),
-      get: vi.fn().mockImplementation(() => {
-        n++
-        return createMockTriviaQuestion({ id: `q-${n}`, question: { text: `Question ${n}?` } })
-      }),
-    }
-  }
-
-  it('posts the pie once and never edits the message while the question is open', async () => {
-    const client = makeClient()
-    const quiz = new SlackQuiz(client as any, logger, makeStore() as any, 'C1', undefined, 3, 30, 'https://h')
-    await quiz.startChannelQuiz('U1')
-
-    const posted = client.chat.postMessage.mock.calls[0][0]
-    expect(posted.blocks[2].elements[0].image_url).toBe('https://h/countdown/30.gif?q=q-1')
-
-    await sleep(1250) // ~12 ticks; the text timer would have edited at least once here
-    expect(client.chat.update).not.toHaveBeenCalled()
-    quiz.abort()
-  })
-
-  it('starts the answer window after the post resolves, not when the question was created', async () => {
-    const client = makeClient()
-    let resolvePost!: (v: any) => void
-    client.chat.postMessage.mockReturnValue(new Promise((r) => (resolvePost = r)))
-    const quiz = new SlackQuiz(client as any, logger, makeStore() as any, 'C1', undefined, 3, 30, 'https://h')
-
-    const starting = quiz.startChannelQuiz('U1')
-    await sleep(300)
-    const before = Date.now()
-    resolvePost({ ok: true, ts: '1.2' })
-    await starting
-
-    const stamped = (quiz as any).state.question.timestamp.getTime()
-    expect(stamped).toBeGreaterThanOrEqual(before)
-    quiz.abort()
-  })
-
-  it('still moves to results and on to the next question', async () => {
-    const client = makeClient()
-    const quiz = new SlackQuiz(client as any, logger, makeStore() as any, 'C1', undefined, 3, 5, 'https://h')
-    await quiz.startChannelQuiz('U1')
-
-    ;(quiz as any).state.question.timestamp = new Date(Date.now() - 6000)
-    await sleep(250)
-    const results = client.chat.update.mock.calls.at(-1)![0]
-    expect(results.text).toMatch(/^Answer: /)
-    expect(results.blocks[1].text.text).toContain('answered')
-    expect(results.blocks[3].elements[0].image_url).toBe(`https://h/countdown/${RESULTS_SECS}.gif?q=q-1-results`)
-
-    ;(quiz as any).state.question.timestamp = new Date(Date.now() - (5 + RESULTS_SECS + 1) * 1000)
-    await sleep(250)
-    const next = client.chat.update.mock.calls.at(-1)![0]
-    expect(next.blocks[2].elements[0].image_url).toBe('https://h/countdown/5.gif?q=q-2')
-    quiz.abort()
   })
 })

@@ -1,15 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   Quiz,
-  TriviaStore,
   SPEED_BONUS_MAX,
   parseQuizzoArgs,
   MAX_QUESTIONS,
   MAX_TIMEOUT_SECS,
+  type QuestionSource,
 } from '../src/trivia-core'
-import { createMockQuestions, setupTestEnvironment } from './test-utils'
-
-global.fetch = vi.fn()
+import { createQuestionSource } from './test-utils'
 
 describe('parseQuizzoArgs', () => {
   it('defaults to 3 questions / 5s', () => {
@@ -44,12 +42,10 @@ describe('parseQuizzoArgs', () => {
 })
 
 describe('Quiz answer rules', () => {
-  let store: TriviaStore
+  let store: QuestionSource
 
-  beforeEach(async () => {
-    setupTestEnvironment()
-    store = new TriviaStore()
-    await store.ensure(2)
+  beforeEach(() => {
+    store = createQuestionSource()
   })
 
   it('credits a late answer with the base point and no bonus', () => {
@@ -84,32 +80,5 @@ describe('Quiz answer rules', () => {
     quiz.submitAnswer('u1', wrong, new Date(q.timestamp.getTime() + 2000))
     expect(quiz.getUserScore('u1')!.score).toBeCloseTo(0, 10)
     expect(quiz.getUserScore('u1')!.totalAnswered).toBe(1)
-  })
-})
-
-describe('TriviaStore.ensure', () => {
-  it('fetches until enough questions are cached', async () => {
-    setupTestEnvironment()
-    const store = new TriviaStore()
-    const ok = await store.ensure(2)
-    expect(ok).toBe(true)
-    expect(store.getCacheSize()).toBeGreaterThanOrEqual(2)
-  })
-
-  it('reports failure when the API cannot supply questions', async () => {
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, json: vi.fn() })
-    const store = new TriviaStore()
-    expect(await store.ensure(5)).toBe(false)
-  })
-
-  it('shares a single in-flight fetch between concurrent callers', async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => createMockQuestions(10) })
-    const store = new TriviaStore() // constructor: fetch call #1
-    await Promise.all([store.ensure(5), store.ensure(5), store.ensure(5)])
-    // All three ensure() calls share one fetch: #2. No third call.
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(store.getCacheSize()).toBeGreaterThanOrEqual(5)
   })
 })
