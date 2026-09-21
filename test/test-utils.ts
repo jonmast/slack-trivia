@@ -1,6 +1,5 @@
-import { vi, expect } from 'vitest'
-import type { HomeView } from '@slack/web-api'
-import type { TriviaQuestion, Question, UserScore } from '../src/trivia-core'
+import { vi } from 'vitest'
+import type { TriviaQuestion } from '../src/trivia-core'
 
 export const createMockTriviaQuestion = (overrides: Partial<TriviaQuestion> = {}): TriviaQuestion => ({
   category: 'Test',
@@ -38,55 +37,4 @@ export const setupFetchMock = (questions: TriviaQuestion[] = createMockQuestions
 export const setupTestEnvironment = () => {
   vi.clearAllMocks()
   return setupFetchMock()
-}
-
-export const createExpectedQuestionView = (question: Question, countdown: number): HomeView => ({
-  type: 'home',
-  blocks: [
-    {
-      block_id: question.question.id,
-      type: 'section',
-      text: {
-        type: 'plain_text',
-        text: `${question.question.question.text}\n ${countdown.toFixed(0)}`,
-      },
-      accessory: {
-        type: 'radio_buttons',
-        action_id: 'radio_sel',
-        options: question.answers.map((answer) => ({
-          value: answer.id,
-          text: {
-            type: 'plain_text',
-            text: answer.text.substring(0, 150),
-          },
-        })),
-      },
-    },
-  ],
-})
-
-export const createExpectedResultsView = (scores: UserScore[]): HomeView => ({
-  type: 'home',
-  blocks: [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '*Results:*\n' + scores.map(score => `<@${score.userId}>: ${score.score} points`).join('\n'),
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'plain_text',
-        text: 'Next question in 5 seconds...',
-      },
-    },
-  ],
-})
-
-export const assertHomeViewStructure = (view: HomeView, expectedType: 'question' | 'results') => {
-  expect(view.type).toBe('home')
-  expect(view.blocks).toHaveLength(expectedType === 'results' ? 2 : 1)
-  expect(view.blocks[0].type).toBe('section')
 }

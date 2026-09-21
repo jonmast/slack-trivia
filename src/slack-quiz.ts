@@ -1,4 +1,4 @@
-import { WebClient, HomeView, Block, KnownBlock } from "@slack/web-api"
+import { WebClient, Block, KnownBlock } from "@slack/web-api"
 import { Logger } from "@slack/bolt"
 import {
   Quiz,
@@ -11,25 +11,19 @@ import {
   QuizCompleteError,
 } from "./trivia-core"
 import {
-  renderQuestion,
-  renderResults,
   renderChannelQuestion,
   renderChannelResults,
   renderFinalSummary,
-  renderFinalSummaryHome,
 } from "./slack-ui"
 import { countdownGifUrl } from "./countdown"
 
 /** How long the per-question results screen stays up before the next question. */
 export const RESULTS_SECS = 5
-/** Home tab only: brief "time's up" beat before revealing the answer. */
-const PROCESSING_MS = 1500
 const TICK_MS = 100
 
 type State =
   | { type: "initial" }
   | { type: "question"; question: Question }
-  | { type: "processing"; question: Question }
   | { type: "results"; question: Question }
   | { type: "complete" }
 
@@ -37,7 +31,6 @@ export class SlackQuiz {
   private quiz: Quiz
   private tick: NodeJS.Timeout
   private cachedRender: string | undefined
-  private homeUsers: Set<string> = new Set()
   private messageTs: string | undefined
   private isAdvancing = false
   private finished = false
@@ -48,11 +41,11 @@ export class SlackQuiz {
     private client: WebClient,
     private logger: Logger,
     private store: TriviaStore,
-    private channelId?: string,
+    private channelId: string,
     private onQuizEnd?: () => void,
     maxQuestions: number = 3,
     timeoutSecs: number = TIMEOUT_SECS,
-    /** Public base URL serving /countdown/:secs.gif (required in channel mode). */
+    /** Public base URL serving /countdown/:secs.gif. */
     private countdownBaseUrl?: string,
   ) {
     this.quiz = new Quiz(store, maxQuestions, timeoutSecs)
@@ -60,8 +53,7 @@ export class SlackQuiz {
     // The tick drives all timing. Nothing inside it may throw or leave a
     // rejected promise behind: an unhandled rejection takes the process down.
     this.tick = setInterval(() => {
-      const work = this.isChannelMode() ? this.channelTick() : this.updateView()
-      Promise.resolve(work).catch((error) => {
+      this.channelTick().catch((error) => {
         this.logger.error("Quiz tick failed:", error)
       })
     }, TICK_MS)
@@ -70,10 +62,6 @@ export class SlackQuiz {
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
-
-  isChannelMode(): boolean {
-    return !!this.channelId
-  }
 
   /** True once the quiz has ended (completed, failed, or aborted). */
   isFinished(): boolean {
@@ -111,101 +99,7 @@ export class SlackQuiz {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Home tab mode
-  // ---------------------------------------------------------------------------
-
-  async initialize(user: string): Promise<void> {
-    this.quiz.addUser(user)
-    this.homeUsers.add(user)
-
-    if (this.state.type !== "initial") {
-      await this.publishHomeView(user, this.renderHome())
-      return
-    }
-
-    await this.ensureQuestions()
-    const question = this.quiz.startQuiz()
-    this.state = { type: "question", question }
-    await this.publishHomeView(user, renderQuestion(question, this.timeoutSecs))
-  }
-
-  private renderHome(): HomeView {
-    switch (this.state.type) {
-      case "question":
-        return renderQuestion(this.state.question, getRemainingTime(this.state.question, this.timeoutSecs))
-      case "processing":
-        return renderQuestion(this.state.question, 0, true)
-      case "results":
-        return renderResults(this.state.question, this.quiz.getLeaderboard())
-      case "complete":
-        return renderFinalSummaryHome(this.quiz.getLeaderboard(), this.quiz.getMaxQuestions())
-      case "initial":
-        throw new Error("Cannot render home view before the quiz has started")
-    }
-  }
-
-  private async publishHomeView(user: string, view: HomeView): Promise<void> {
-    const result = await this.client.views.publish({ user_id: user, view })
-    if (!result.ok) {
-      throw new Error(`views.publish failed: ${result.error}`)
-    }
-  }
-
-  /** Push a home view to every participant, but only when it actually changed. */
-  private pushHomeViewIfChanged(view: HomeView): void {
-    const json = JSON.stringify(view)
-    if (json === this.cachedRender) return
-    this.cachedRender = json
-    for (const user of this.homeUsers) {
-      this.publishHomeView(user, view).catch((error) => {
-        this.logger.error(`Failed to update home view for user ${user}:`, error)
-      })
-    }
-  }
-
-  updateView(): void {
-    if (this.state.type === "initial" || this.state.type === "complete") {
-      return
-    }
-
-    if (this.state.type === "question") {
-      const remaining = getRemainingTime(this.state.question, this.timeoutSecs)
-      if (remaining <= 0) {
-        const question = this.state.question
-        this.state = { type: "processing", question }
-        setTimeout(() => {
-          if (this.state.type === "processing" && this.state.question === question) {
-            this.state = { type: "results", question }
-          }
-        }, PROCESSING_MS)
-        return
-      }
-      this.pushHomeViewIfChanged(renderQuestion(this.state.question, remaining))
-      return
-    }
-
-    if (this.state.type === "processing") {
-      this.pushHomeViewIfChanged(renderQuestion(this.state.question, 0, true))
-      return
-    }
-
-    // results
-    if (this.resultsExpired(this.state.question)) {
-      void this.advance()
-      return
-    }
-    this.pushHomeViewIfChanged(renderResults(this.state.question, this.quiz.getLeaderboard()))
-  }
-
-  // ---------------------------------------------------------------------------
-  // Channel mode
-  // ---------------------------------------------------------------------------
-
   async startChannelQuiz(initiatorUserId: string): Promise<void> {
-    if (!this.isChannelMode()) {
-      throw new Error("Cannot start channel quiz without channel ID")
-    }
     if (!this.countdownBaseUrl) {
       throw new Error("Channel quizzes need COUNTDOWN_BASE_URL so Slack can fetch the countdown timer.")
     }
@@ -215,7 +109,7 @@ export class SlackQuiz {
     const question = this.quiz.startQuiz()
 
     const result = await this.client.chat.postMessage({
-      channel: this.channelId!,
+      channel: this.channelId,
       blocks: this.renderChannelQuestionBlocks(question),
       text: this.channelText(question, false),
     })
@@ -266,7 +160,7 @@ export class SlackQuiz {
 
   private async updateChannelMessage(blocks: (Block | KnownBlock)[], text: string): Promise<void> {
     await this.client.chat.update({
-      channel: this.channelId!,
+      channel: this.channelId,
       ts: this.messageTs!,
       blocks,
       text,
@@ -292,7 +186,7 @@ export class SlackQuiz {
 
     const question = this.state.question
 
-    if (this.state.type === "question" || this.state.type === "processing") {
+    if (this.state.type === "question") {
       // The client animates the countdown GIF; editing the message would
       // restart it, so the question frame is left alone until time's up.
       if (getRemainingTime(question, this.timeoutSecs) > 0) return
@@ -308,10 +202,6 @@ export class SlackQuiz {
     }
     await this.updateChannelIfChanged(this.renderChannelResultsBlocks(question), this.channelText(question, true))
   }
-
-  // ---------------------------------------------------------------------------
-  // Shared
-  // ---------------------------------------------------------------------------
 
   private resultsExpired(question: Question): boolean {
     return getElapsedTime(question) - this.timeoutSecs > RESULTS_SECS
@@ -337,16 +227,14 @@ export class SlackQuiz {
         throw error
       }
 
-      if (this.isChannelMode()) {
-        if (!this.messageTs) {
-          throw new Error("No message timestamp available for update")
-        }
-        await this.updateChannelMessage(
-          this.renderChannelQuestionBlocks(question),
-          this.channelText(question, false),
-        )
-        this.startQuestionClock(question)
+      if (!this.messageTs) {
+        throw new Error("No message timestamp available for update")
       }
+      await this.updateChannelMessage(
+        this.renderChannelQuestionBlocks(question),
+        this.channelText(question, false),
+      )
+      this.startQuestionClock(question)
 
       this.state = { type: "question", question }
     } catch (error) {
@@ -367,21 +255,10 @@ export class SlackQuiz {
     const totalQuestions = this.quiz.getMaxQuestions()
 
     try {
-      if (this.isChannelMode()) {
-        if (this.messageTs) {
-          await this.updateChannelMessage(
-            renderFinalSummary(leaderboard, totalQuestions, this.messageTs),
-            "🎉 Trivia quiz completed! Thanks for playing!",
-          )
-        }
-      } else {
-        const view = renderFinalSummaryHome(leaderboard, totalQuestions)
-        await Promise.all(
-          [...this.homeUsers].map((user) =>
-            this.publishHomeView(user, view).catch((error) => {
-              this.logger.error(`Failed to publish final summary for user ${user}:`, error)
-            }),
-          ),
+      if (this.messageTs) {
+        await this.updateChannelMessage(
+          renderFinalSummary(leaderboard, totalQuestions, this.messageTs),
+          "🎉 Trivia quiz completed! Thanks for playing!",
         )
       }
     } catch (error) {
@@ -396,9 +273,6 @@ export class SlackQuiz {
       throw new Error("No active quiz")
     }
     this.quiz.addUser(userId)
-    if (!this.isChannelMode()) {
-      this.homeUsers.add(userId)
-    }
     return this.quiz.submitAnswer(userId, answerId, timestamp, questionId)
   }
 }

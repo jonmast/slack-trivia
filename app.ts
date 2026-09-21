@@ -17,7 +17,7 @@ const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 // Public base URL of this app (e.g. https://trivia.example.com). Channel
 // questions embed an animated countdown served from /countdown/:secs.gif and
 // Slack fetches it while posting, so this must be reachable from the internet.
-// Required for /quizzo; the Home tab quiz works without it.
+// Required for /quizzo.
 const countdownBaseUrl = process.env.COUNTDOWN_BASE_URL || undefined;
 
 const app = new App({
@@ -34,8 +34,6 @@ const app = new App({
 
 const STORE = new TriviaStore();
 
-// One shared Home-tab quiz; everyone who opens the Home tab joins it.
-let HOME_QUIZ: SlackQuiz | undefined;
 const CHANNEL_QUIZZES = new ChannelQuizzes();
 
 app.action("radio_sel", async ({ ack, body, logger }) => {
@@ -61,37 +59,27 @@ app.action("radio_sel", async ({ ack, body, logger }) => {
   const answeredAt = parseTs(action.action_ts);
 
   // Channel quiz: block_actions from a message carry the channel.
-  if (channelId) {
-    const channelQuiz = CHANNEL_QUIZZES.running(channelId);
-    if (!channelQuiz) {
-      logger.info(`Answer from ${userId} in ${channelId} but no active quiz`);
-      return;
-    }
-
-    try {
-      const correct = channelQuiz.submitAnswer(
-        userId,
-        answer,
-        answeredAt,
-        questionId,
-      );
-      logger.info(`Answer from ${userId} in ${channelId}: ${correct ? "correct" : "wrong"}`);
-    } catch (error) {
-      logger.error("Error submitting channel answer:", error);
-    }
+  if (!channelId) {
+    logger.info(`Answer from ${userId} outside a channel; ignoring`);
     return;
   }
 
-  // Home tab quiz: no channel and no response_url to talk back on.
-  if (!HOME_QUIZ || HOME_QUIZ.isFinished()) {
-    logger.info("No active home quiz for answer submission");
+  const channelQuiz = CHANNEL_QUIZZES.running(channelId);
+  if (!channelQuiz) {
+    logger.info(`Answer from ${userId} in ${channelId} but no active quiz`);
     return;
   }
+
   try {
-    const correct = HOME_QUIZ.submitAnswer(userId, answer, answeredAt, questionId);
-    logger.info(`Home answer from ${userId}: ${correct ? "correct" : "wrong"}`);
+    const correct = channelQuiz.submitAnswer(
+      userId,
+      answer,
+      answeredAt,
+      questionId,
+    );
+    logger.info(`Answer from ${userId} in ${channelId}: ${correct ? "correct" : "wrong"}`);
   } catch (error) {
-    logger.error("Home tab answer submission failed:", error);
+    logger.error("Error submitting channel answer:", error);
   }
 });
 
@@ -188,22 +176,6 @@ app.command("/quizzo", async ({ command, ack, respond, client, logger }) => {
   }
 });
 
-app.event("app_home_opened", async ({ event, client, logger }) => {
-  // Fires for the Messages tab too; only the Home tab hosts the quiz.
-  if (event.tab !== "home") {
-    return;
-  }
-  logger.info("app_home_opened", { user: event.user });
-  try {
-    if (!HOME_QUIZ || HOME_QUIZ.isFinished()) {
-      HOME_QUIZ = new SlackQuiz(client, logger, STORE);
-    }
-    await HOME_QUIZ.initialize(event.user);
-  } catch (error) {
-    logger.error("Failed to initialize home quiz:", error);
-  }
-});
-
 (async () => {
   await app.start();
 
@@ -213,7 +185,7 @@ app.event("app_home_opened", async ({ event, client, logger }) => {
       : `⚡️ Bolt app is running in HTTP mode on port ${port}!`,
   );
   app.logger.info(
-    "📝 Registered handlers: slash command /quizzo, event app_home_opened, actions radio_sel, recap",
+    "📝 Registered handlers: slash command /quizzo, actions radio_sel, recap",
   );
   app.logger.info(
     countdownBaseUrl

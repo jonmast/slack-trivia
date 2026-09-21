@@ -21,7 +21,6 @@ vi.mock('@slack/bolt', () => ({
 
 vi.mock('@slack/web-api', () => ({
   WebClient: vi.fn(),
-  HomeView: {}
 }))
 
 // Mock fetch for TriviaStore
