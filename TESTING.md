@@ -19,7 +19,13 @@ pnpm test
 ## Projects
 
 - **node** (`test/*.test.ts`) — the pure modules behind the current Node app: trivia rules and scoring, quiz snapshot round-trips, Slack UI rendering, countdown GIFs, and the quiz flow. Runs in a plain Node environment.
-- **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`: the `ChannelObject` Durable Object (argument parsing, SQLite channel bookkeeping), the Slack request handler (signature verification, `/quizzo` acknowledgement, and the `response_url` reply), and the pre-rendered countdown GIFs served through the `ASSETS` binding.
+- **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`: the `ChannelObject` Durable Object (argument parsing, SQLite channel bookkeeping, alarm-driven progression), the Slack request handler (signature verification, `/quizzo` acknowledgement, and the `response_url` reply), and the pre-rendered countdown GIFs served through the `ASSETS` binding.
+
+## Alarm-driven tests
+
+`test/worker/alarm-progression.test.ts` runs quizzes with one-second answer windows and a one-second results window (`RESULTS_SECS` is a worker test binding; production uses five seconds), so a whole quiz plays out in a few seconds of real time.
+
+Alarms are really scheduled, so the runtime delivers most of them itself and the tests just wait for the Slack calls to arrive. Deliveries the platform would never make are driven by hand through `runInDurableObject`: a duplicate alarm calls `alarm()` again, and a late wake deletes the scheduled alarm, lets the deadline pass unattended, then calls `alarm()`. The restart test aborts the instance with `state.abort()` and re-fetches the stub, so the quiz continues on an object rebuilt from storage alone.
 
 ## Conventions
 
