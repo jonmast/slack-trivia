@@ -61,9 +61,9 @@ const blocks = renderChannelQuestion(mockQuestion, 30, 2, 10, GIF_URL)
 
   describe('renderChannelResults', () => {
     const mockLeaderboard = [
-      { userId: 'U12345', score: 100, totalAnswered: 2 },
-      { userId: 'U67890', score: 50, totalAnswered: 2 },
-      { userId: 'U11111', score: 0, totalAnswered: 1 }
+      { userId: 'U12345', score: 100, speedBonus: 0, totalAnswered: 2 },
+      { userId: 'U67890', score: 50, speedBonus: 0, totalAnswered: 2 },
+      { userId: 'U11111', score: 0, speedBonus: 0, totalAnswered: 1 }
     ]
 
     it('should render results with leaderboard', () => {
@@ -133,6 +133,22 @@ expect(blocks[2].type).toBe('section')
       expect(leaderboardText).toMatch(/1\. <@U12345>/)
       expect(leaderboardText).toMatch(/2\. <@U67890>/)
       expect(leaderboardText).toMatch(/3\. <@U11111>/)
+    })
+
+    it('should show whole points, with the speed bonus only ordering ties', () => {
+      const blocks = renderChannelResults(mockQuestion, [
+        { userId: 'U-SPEEDY', score: 2, speedBonus: 0.4, totalAnswered: 3 },
+        { userId: 'U-SLOW', score: 3, speedBonus: 0.1, totalAnswered: 3 },
+        { userId: 'U-FAST', score: 3, speedBonus: 0.3, totalAnswered: 3 },
+        { userId: 'U-ONE', score: 1, speedBonus: 0, totalAnswered: 3 },
+      ], 3, 3, 8, GIF_URL)
+
+      expect((blocks[2] as any).text.text.split('\n').slice(1)).toEqual([
+        '1. <@U-FAST>: 3 points',
+        '2. <@U-SLOW>: 3 points',
+        '3. <@U-SPEEDY>: 2 points',
+        '4. <@U-ONE>: 1 point',
+      ])
     })
   })
 })

@@ -53,7 +53,7 @@ describe('Quiz answer rules', () => {
     const q = quiz.startQuiz()
     const late = new Date(q.timestamp.getTime() + 10_001)
     expect(quiz.submitAnswer('u1', q.correctAnswer.id, late)).toBe(true)
-    expect(quiz.getUserScore('u1')!.score).toBe(1)
+    expect(quiz.getUserScore('u1')).toMatchObject({ score: 1, speedBonus: 0 })
   })
 
   it('credits an answer to the question it was given for, even after advancing', () => {
@@ -69,16 +69,79 @@ describe('Quiz answer rules', () => {
     const q = quiz.startQuiz()
     // 15s into a 20s question: 25% of the window remains -> 25% of max bonus.
     quiz.submitAnswer('u1', q.correctAnswer.id, new Date(q.timestamp.getTime() + 15_000))
-    expect(quiz.getUserScore('u1')!.score).toBeCloseTo(1 + 0.25 * SPEED_BONUS_MAX, 5)
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(0.25 * SPEED_BONUS_MAX, 5)
   })
 
-  it('refunds the bonus correctly when a user changes a correct answer to a wrong one', () => {
+  it('keeps the speed bonus out of the points', () => {
+    const quiz = new Quiz(store, 3, 10)
+    const q = quiz.startQuiz()
+    quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp)
+    expect(quiz.getUserScore('u1')!.score).toBe(1)
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 5)
+  })
+
+  it('drops the bonus when a user changes a correct answer to a wrong one', () => {
     const quiz = new Quiz(store, 3, 10)
     const q = quiz.startQuiz()
     const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
     quiz.submitAnswer('u1', q.correctAnswer.id, new Date(q.timestamp.getTime() + 1000))
     quiz.submitAnswer('u1', wrong, new Date(q.timestamp.getTime() + 2000))
-    expect(quiz.getUserScore('u1')!.score).toBeCloseTo(0, 10)
-    expect(quiz.getUserScore('u1')!.totalAnswered).toBe(1)
+    expect(quiz.getUserScore('u1')).toMatchObject({ score: 0, speedBonus: 0, totalAnswered: 1 })
+  })
+
+  it('leaves exactly no bonus once every correct answer has been changed', () => {
+    const quiz = new Quiz(store, 3, 10)
+    const q1 = quiz.startQuiz()
+    const q2 = quiz.nextQuestion()
+    const wrong = (q: typeof q1) => q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
+    // Bonuses whose float sum, less each of them, is not exactly zero.
+    quiz.submitAnswer('u1', q1.correctAnswer.id, new Date(q1.timestamp.getTime() + 1500), q1.question.id)
+    quiz.submitAnswer('u1', q2.correctAnswer.id, new Date(q2.timestamp.getTime() + 400), q2.question.id)
+    quiz.submitAnswer('u1', wrong(q1), new Date(q1.timestamp.getTime() + 3000), q1.question.id)
+    quiz.submitAnswer('u1', wrong(q2), new Date(q2.timestamp.getTime() + 3000), q2.question.id)
+    expect(quiz.getUserScore('u1')).toMatchObject({ score: 0, speedBonus: 0, totalAnswered: 2 })
+  })
+})
+
+describe('Leaderboard ranking', () => {
+  /** Asks one question per round; each participant answers `[correct?, msIntoWindow]`. */
+  function play(quiz: Quiz, answers: Record<string, [boolean, number][]>) {
+    const rounds = Math.max(...Object.values(answers).map((a) => a.length))
+    for (let i = 0; i < rounds; i++) {
+      const q = i === 0 ? quiz.startQuiz() : quiz.nextQuestion()
+      const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
+      for (const [userId, picks] of Object.entries(answers)) {
+        const pick = picks[i]
+        if (!pick) continue
+        const [correct, ms] = pick
+        quiz.submitAnswer(userId, correct ? q.correctAnswer.id : wrong, new Date(q.timestamp.getTime() + ms))
+      }
+    }
+  }
+
+  it('ranks more points above any amount of speed bonus', () => {
+    const quiz = new Quiz(createQuestionSource(), 10, 5)
+    play(quiz, {
+      // Nine instant correct answers and one miss: nearly the maximum bonus.
+      speedy: [...Array(9).fill([true, 0]), [false, 0]],
+      // Ten correct answers, each just before the window closes.
+      steady: Array(10).fill([true, 4900]),
+    })
+
+    const [first, second] = quiz.getLeaderboard()
+    expect(first).toMatchObject({ userId: 'steady', score: 10 })
+    expect(second).toMatchObject({ userId: 'speedy', score: 9 })
+    expect(second.speedBonus).toBeGreaterThan(first.speedBonus + 1)
+  })
+
+  it('breaks a tie on points with the speed bonus', () => {
+    const quiz = new Quiz(createQuestionSource(), 2, 5)
+    play(quiz, {
+      slow: [[true, 4000], [true, 4000]],
+      fast: [[true, 1000], [true, 1000]],
+      wrong: [[false, 0], [false, 0]],
+    })
+
+    expect(quiz.getLeaderboard().map((s) => s.userId)).toEqual(['fast', 'slow', 'wrong'])
   })
 })

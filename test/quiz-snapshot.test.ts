@@ -37,7 +37,7 @@ function questionSource(questions: TriviaQuestion[]): QuestionSource {
 /**
  * A quiz mid-question: two questions asked, two participants (plus a user who
  * has joined without answering), and one correct answer given fast enough to
- * earn a bonus worth refunding.
+ * earn a bonus that a changed answer can take away.
  */
 function quizInProgress(): { quiz: Quiz; source: QuestionSource; q1: Question; q2: Question } {
   const source = questionSource(triviaQuestions(3))
@@ -98,7 +98,6 @@ describe('Quiz snapshot', () => {
     expect(snapshot.isActive).toBe(true)
     expect(snapshot.currentQuestionIndex).toBe(1)
     expect(snapshot.users).toEqual(['lurker'])
-    expect(snapshot.userScores).toEqual(quiz.getUserScores())
 
     expect(snapshot.questions.map((q) => q.question.id)).toEqual(['q1', 'q2'])
     expect(snapshot.questions[0].question).toEqual(q1.question)
@@ -152,7 +151,7 @@ describe('Quiz snapshot', () => {
 
       // Late: past the answer window, so the base point and no bonus.
       instance.submitAnswer('u3', q1.correctAnswer.id, at(q1, 25_000), q1.question.id)
-      // Changed: the bonus u1 earned on q2 before the snapshot has to be refunded.
+      // Changed: the bonus u1 earned on q2 before the snapshot no longer counts.
       instance.submitAnswer('u1', wrongAnswerId(q2), at(q2, 2000))
       // Fast: answered almost immediately, so nearly the whole bonus.
       instance.submitAnswer('u2', q2.correctAnswer.id, at(q2, 100))
@@ -168,12 +167,38 @@ describe('Quiz snapshot', () => {
 
     for (const instance of [quiz, rehydrated]) {
       const recap = instance.getRecap('u1')
-      expect(instance.getUserScore('u3')!.score).toBe(1)
-      // The refund is exact: u1 keeps q1's points and nothing from q2.
-      expect(recap[1].points).toBe(0)
-      expect(instance.getUserScore('u1')!.score).toBeCloseTo(recap[0].points, 10)
-      expect(instance.getUserScore('u2')!.score).toBeCloseTo(1 + 0.99 * SPEED_BONUS_MAX, 10)
+      expect(instance.getUserScore('u3')).toMatchObject({ score: 1, speedBonus: 0 })
+      // u1 keeps q1's point and bonus and nothing from q2.
+      expect(recap[1]).toMatchObject({ points: 0, speedBonus: 0 })
+      expect(instance.getUserScore('u1')!.score).toBe(1)
+      expect(instance.getUserScore('u1')!.speedBonus).toBeCloseTo(recap[0].speedBonus, 10)
+      expect(instance.getUserScore('u2')!.score).toBe(1)
+      expect(instance.getUserScore('u2')!.speedBonus).toBeCloseTo(0.99 * SPEED_BONUS_MAX, 10)
     }
+  })
+
+  it('splits the speed bonus out of the points of a version 1 snapshot', () => {
+    const { quiz, source } = quizInProgress()
+    // Version 1 also stored one combined score per participant.
+    const v1 = {
+      ...throughStorage(quiz.toSnapshot()),
+      version: 1,
+      userScores: quiz.getUserScores().map(({ speedBonus, ...rest }) => ({
+        ...rest,
+        score: rest.score + speedBonus,
+      })),
+    } as QuizSnapshot
+
+    const rehydrated = Quiz.fromSnapshot(v1, source)
+
+    for (const userId of ['lurker', 'u1', 'u2']) {
+      const expected = quiz.getUserScore(userId)!
+      const actual = rehydrated.getUserScore(userId)!
+      expect(actual.score).toBe(expected.score)
+      expect(actual.speedBonus).toBeCloseTo(expected.speedBonus, 10)
+      expect(actual.totalAnswered).toBe(expected.totalAnswered)
+    }
+    expect(rehydrated.toSnapshot().version).toBe(2)
   })
 
   it('draws its remaining questions from the source it is rebuilt with', () => {
@@ -230,7 +255,7 @@ describe('Quiz snapshot', () => {
 
     const restoredQ1 = rehydrated.getQuestions()[0]
     rehydrated.submitAnswer('u9', restoredQ1.correctAnswer.id, at(restoredQ1, 1000), 'q1')
-    // Changing an answer refunds in place, so a leaked score would be rewritten after storage.
+    // Changing an answer replaces it in place, so a leaked response would be rewritten after storage.
     rehydrated.submitAnswer('u1', wrongAnswerId(restoredQ1), at(restoredQ1, 5000), 'q1')
     expect(snapshot).toStrictEqual(asWritten)
     expect(quiz.getUserScore('u9')).toBeUndefined()

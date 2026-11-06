@@ -45,11 +45,12 @@ describe('Multiplayer functionality', () => {
     const user2Score = scores.find(s => s.userId === 'user2')
     const user3Score = scores.find(s => s.userId === 'user3')
 
-    expect(user1Score?.score).toBeGreaterThanOrEqual(1)
-    expect(user1Score?.score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
+    expect(user1Score?.score).toBe(1)
+    expect(user1Score?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
     expect(user2Score?.score).toBe(0)
-    expect(user3Score?.score).toBeGreaterThanOrEqual(1)
-    expect(user3Score?.score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
+    expect(user2Score?.speedBonus).toBe(0)
+    expect(user3Score?.score).toBe(1)
+    expect(user3Score?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
   })
 
   it('should allow changing answer and update score accordingly', () => {
@@ -71,8 +72,8 @@ describe('Multiplayer functionality', () => {
 
     scores = quiz.getUserScores()
     userScore = scores.find(s => s.userId === 'user1')
-    expect(userScore?.score).toBeGreaterThanOrEqual(1)
-    expect(userScore?.score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
+    expect(userScore?.score).toBe(1)
+    expect(userScore?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
     expect(userScore?.totalAnswered).toBe(1)
   })
 
@@ -99,16 +100,11 @@ describe('Multiplayer functionality', () => {
     quiz.submitAnswer('bob', wrongId, new Date())       // bob: 1
     quiz.submitAnswer('charlie', correctId, new Date()) // charlie: 1
 
-    const scores = quiz.getUserScores()
-    const sortedScores = scores.sort((a, b) => b.score - a.score)
+    const leaderboard = quiz.getLeaderboard()
 
-    expect(sortedScores[0].userId).toBe('alice')
-    expect(sortedScores[0].score).toBeGreaterThanOrEqual(2)
-    expect(sortedScores[0].score).toBeLessThan(2 + 2 * SPEED_BONUS_MAX + 0.01)
-    expect(sortedScores[1].score).toBeGreaterThanOrEqual(1)
-    expect(sortedScores[1].score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
-    expect(sortedScores[2].score).toBeGreaterThanOrEqual(1)
-    expect(sortedScores[2].score).toBeLessThanOrEqual(1 + SPEED_BONUS_MAX)
+    expect(leaderboard[0].userId).toBe('alice')
+    expect(leaderboard.map((s) => s.score)).toEqual([2, 1, 1])
+    expect(leaderboard[0].speedBonus).toBeLessThanOrEqual(2 * SPEED_BONUS_MAX)
   })
 
   it('should have a configurable maximum number of questions', () => {
@@ -179,14 +175,14 @@ describe('Multiplayer functionality', () => {
     const fastUserScore = scores.find(s => s.userId === 'fast-user')
     const slowUserScore = scores.find(s => s.userId === 'slow-user')
     
-    expect(fastUserScore?.score).toBeGreaterThan(1)
-    expect(slowUserScore?.score).toBeGreaterThan(1)
+    expect(fastUserScore?.score).toBe(1)
+    expect(slowUserScore?.score).toBe(1)
     
-    expect(fastUserScore?.score).toBeGreaterThan(slowUserScore!.score)
+    expect(fastUserScore?.speedBonus).toBeGreaterThan(slowUserScore!.speedBonus)
     
-    expect(fastUserScore?.score).toBeCloseTo(1 + (4/5 * SPEED_BONUS_MAX), 2)
+    expect(fastUserScore?.speedBonus).toBeCloseTo(4/5 * SPEED_BONUS_MAX, 2)
     
-    expect(slowUserScore?.score).toBeCloseTo(1 + (1/5 * SPEED_BONUS_MAX), 2)
+    expect(slowUserScore?.speedBonus).toBeCloseTo(1/5 * SPEED_BONUS_MAX, 2)
   })
 
   it('should not award speed bonus for incorrect answers', () => {
@@ -206,5 +202,6 @@ describe('Multiplayer functionality', () => {
     
     // Should still be 0 regardless of speed
     expect(userScore?.score).toBe(0)
+    expect(userScore?.speedBonus).toBe(0)
   })
 })

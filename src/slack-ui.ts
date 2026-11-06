@@ -1,7 +1,15 @@
 import type { AnyMessageBlock, AnyModalBlock, ModalView } from "slack-cloudflare-workers"
-import { Question, UserScore, RecapQuestion, RecapOption } from "./trivia-core"
+import { Question, UserScore, RecapQuestion, RecapOption, compareRank } from "./trivia-core"
 
 export const OPTION_TEXT_MAX = 75
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+function speedBonus(bonus: number): string {
+  return `⚡ ${bonus.toFixed(2)}`
+}
 
 export function optionLabel(text: string): string {
   if (text.length <= OPTION_TEXT_MAX) {
@@ -97,10 +105,10 @@ export function renderChannelResults(
   nextSecs: number,
   countdownGifUrl: string,
 ): AnyMessageBlock[] {
-  const sortedScores = userScores.sort((a, b) => b.score - a.score)
+  const sortedScores = userScores.sort(compareRank)
   const leaderboard = sortedScores
     .map(
-      (user, index) => `${index + 1}. <@${user.userId}>: ${Math.round(user.score)} points`,
+      (user, index) => `${index + 1}. <@${user.userId}>: ${plural(user.score, "point", "points")}`,
     )
     .join("\n")
 
@@ -142,12 +150,22 @@ export function renderChannelResults(
 }
 
 export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): AnyMessageBlock[] {
-  const sortedScores = userScores.sort((a, b) => b.score - a.score)
+  const sortedScores = userScores.sort(compareRank)
   const leaderboard = sortedScores
     .map(
-      (user, index) => `${index + 1}. <@${user.userId}>: ${user.score.toFixed(1)} points (${user.totalAnswered}/${totalQuestions} answered)`,
+      (user, index) =>
+        `${index + 1}. <@${user.userId}>: ${plural(user.score, "point", "points")} · ${speedBonus(user.speedBonus)} · ${user.totalAnswered}/${totalQuestions} answered`,
     )
     .join("\n")
+
+  const tieBreakNote: AnyMessageBlock[] = leaderboard
+    ? [
+        {
+          type: "context",
+          elements: [{ type: "mrkdwn", text: "Ranked by points. The ⚡ speed bonus only breaks ties." }],
+        },
+      ]
+    : []
 
   return [
     {
@@ -164,6 +182,7 @@ export function renderFinalSummary(userScores: UserScore[], totalQuestions: numb
         text: `🏆 *Final Leaderboard:*\n${leaderboard || "No participants"}`,
       },
     },
+    ...tieBreakNote,
     {
       type: "actions",
       elements: [
@@ -184,12 +203,15 @@ function recapMarker(option: RecapOption): string {
 }
 
 function recapPoints(entry: RecapQuestion): string {
-  return entry.answered ? `${entry.points.toFixed(1)} pts` : "(no answer)"
+  if (!entry.answered) return "(no answer)"
+  const points = plural(entry.points, "pt", "pts")
+  return entry.points > 0 ? `${points} · ${speedBonus(entry.speedBonus)}` : points
 }
 
 export function renderRecapModal(recap: RecapQuestion[]): ModalView {
   const answered = recap.filter((entry) => entry.answered).length
   const total = recap.reduce((sum, entry) => sum + entry.points, 0)
+  const totalBonus = recap.reduce((sum, entry) => sum + entry.speedBonus, 0)
 
   return {
     type: "modal",
@@ -200,13 +222,13 @@ export function renderRecapModal(recap: RecapQuestion[]): ModalView {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*${total.toFixed(1)} pts* · ${answered}/${recap.length} answered`,
+          text: `*${plural(total, "pt", "pts")}* · ${speedBonus(totalBonus)} speed bonus · ${answered}/${recap.length} answered`,
         },
       },
       {
         type: "context",
         elements: [
-          { type: "mrkdwn", text: "✅ you picked, correct · ❌ you picked, wrong · 💡 correct, not picked" },
+          { type: "mrkdwn", text: "✅ you picked, correct · ❌ you picked, wrong · 💡 correct, not picked · ⚡ speed bonus" },
         ],
       },
       ...recap.map((entry, index): AnyModalBlock => ({

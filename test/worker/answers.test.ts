@@ -6,6 +6,7 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
+import { SPEED_BONUS_MAX } from '../../src/trivia-core'
 import {
   SlackRecorder,
   channelObject,
@@ -22,8 +23,8 @@ import {
  * Issue #10: answers are recorded durably and scored.
  *
  * Everything is asserted through the leaderboards Slack receives: the results
- * frame rounds points, so the speed bonus is read off the final summary, which
- * prints one decimal place.
+ * frame shows whole points only, so the speed bonus is read off the final
+ * summary, which lists it separately to two decimal places.
  */
 
 const WINDOW = '1s'
@@ -50,10 +51,18 @@ function blockId(blocks: any[]): string {
   return blocks[1].block_id
 }
 
-/** The `N. <@user>: X.X points (a/b answered)` lines of the final summary. */
+/** The `N. <@user>: P points · ⚡ B · a/b answered` lines of the final summary. */
 function finalLeaderboard(blocks: any[]): string[] {
   const text: string = blocks[1].text.text
   return text.split('\n').slice(1)
+}
+
+/** A final summary line split into its parts, for bonuses that depend on timing. */
+function parseEntry(line: string) {
+  const match = /^(\d+)\. <@([^>]+)>: (\d+) points? · ⚡ (\d+\.\d\d) · (\d+\/\d+) answered$/.exec(line)
+  if (!match) throw new Error(`Unexpected leaderboard line: ${line}`)
+  const [, rank, userId, points, speedBonus, answered] = match
+  return { rank: Number(rank), userId, points: Number(points), answered, speedBonus: Number(speedBonus) }
 }
 
 function frame(calls: { blocks: any[] }[], header: string): any[] {
@@ -126,14 +135,19 @@ describe('recording answers', () => {
 
     await waitForCalls(slack, 3)
     // Both earn the base point; the faster click earns the bigger bonus, so it
-    // leads the board.
-    expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-FAST>: 1.2 points (1/1 answered)',
-      '2. <@U-SLOW>: 1.1 points (1/1 answered)',
-    ])
+    // wins the tie and leads the board.
+    const [fast, slow, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
+    expect(rest).toEqual([])
+    expect(fast).toMatchObject({ rank: 1, userId: 'U-FAST', points: 1, answered: '1/1' })
+    expect(slow).toMatchObject({ rank: 2, userId: 'U-SLOW', points: 1, answered: '1/1' })
+    expect(fast.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 1)
+    expect(slow.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 1)
 
-    // The results leaderboard, shown before the summary, has them too.
-    expect(frame(slack.calls, 'Answer 1/1:')[2].text.text).toContain('<@U-FAST>: 1 points')
+    // The results leaderboard, shown before the summary, has them too, in
+    // whole points.
+    expect(frame(slack.calls, 'Answer 1/1:')[2].text.text).toContain(
+      '1. <@U-FAST>: 1 point\n2. <@U-SLOW>: 1 point',
+    )
   })
 
   it('still awards the base point for an answer after the answer window', async () => {
@@ -151,7 +165,7 @@ describe('recording answers', () => {
 
     await waitForCalls(slack, 3)
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-LAGGED>: 1.0 points (1/1 answered)',
+      '1. <@U-LAGGED>: 1 point · ⚡ 0.00 · 1/1 answered',
     ])
   })
 
@@ -169,7 +183,7 @@ describe('recording answers', () => {
     // Credited to question 1, where that answer ID is correct; had it landed on
     // question 2 it would have matched nothing and scored zero.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-LATE>: 1.0 points (1/2 answered)',
+      '1. <@U-LATE>: 1 point · ⚡ 0.00 · 1/2 answered',
     ])
   })
 
@@ -185,7 +199,7 @@ describe('recording answers', () => {
     // Only the final choice counts: the point and bonus from the first pick are
     // refunded, and the change is not a second answer.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-FICKLE>: 0.0 points (1/1 answered)',
+      '1. <@U-FICKLE>: 0 points · ⚡ 0.00 · 1/1 answered',
     ])
   })
 
@@ -265,8 +279,9 @@ describe('recording answers', () => {
     await waitForCalls(slack, 3)
     // Stamped moments after the question went up, the click earns the base
     // point plus the near-max speed bonus.
-    expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-CLICKER>: 1.2 points (1/1 answered)',
-    ])
+    const [clicker, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
+    expect(rest).toEqual([])
+    expect(clicker).toMatchObject({ rank: 1, userId: 'U-CLICKER', points: 1, answered: '1/1' })
+    expect(clicker.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 1)
   })
 })

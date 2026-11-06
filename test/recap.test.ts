@@ -38,7 +38,7 @@ describe('Quiz.getRecap', () => {
     expect(entry.options.filter((o) => !o.selected && !o.correct)).toHaveLength(2)
   })
 
-  it('awards base point plus speed bonus for a correct answer', () => {
+  it('awards a point and a separate speed bonus for a correct answer', () => {
     const q = quiz.startQuiz()
     const halfway = new Date(q.timestamp.getTime() + 5_000)
     quiz.submitAnswer('u1', q.correctAnswer.id, halfway)
@@ -46,7 +46,8 @@ describe('Quiz.getRecap', () => {
     const [entry] = quiz.getRecap('u1')
 
     expect(entry.options.find((o) => o.correct)).toMatchObject({ selected: true })
-    expect(entry.points).toBeCloseTo(1 + SPEED_BONUS_MAX / 2, 5)
+    expect(entry.points).toBe(1)
+    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 5)
   })
 
   it('awards zero for a wrong answer', () => {
@@ -54,7 +55,7 @@ describe('Quiz.getRecap', () => {
     const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!
     quiz.submitAnswer('u1', wrong.id, q.timestamp)
 
-    expect(quiz.getRecap('u1')[0].points).toBe(0)
+    expect(quiz.getRecap('u1')[0]).toMatchObject({ points: 0, speedBonus: 0 })
   })
 
   it('reports a skipped question as unanswered with only the correct option marked', () => {
@@ -80,7 +81,8 @@ describe('Quiz.getRecap', () => {
 
     expect(entry.options.filter((o) => o.selected)).toHaveLength(1)
     expect(entry.options.find((o) => o.selected)!.correct).toBe(true)
-    expect(entry.points).toBeCloseTo(1 + SPEED_BONUS_MAX, 5)
+    expect(entry.points).toBe(1)
+    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 5)
   })
 
   it('still works after the quiz has ended', () => {
@@ -104,6 +106,7 @@ describe('Quiz.getRecap', () => {
     for (const entry of recap) {
       expect(entry.answered).toBe(false)
       expect(entry.points).toBe(0)
+      expect(entry.speedBonus).toBe(0)
       expect(entry.options).toHaveLength(4)
       expect(entry.options.filter((o) => o.selected)).toHaveLength(0)
       expect(entry.options.filter((o) => o.correct)).toHaveLength(1)
@@ -116,7 +119,8 @@ describe('renderRecapModal', () => {
     {
       text: 'Right one?',
       answered: true,
-      points: 1.16,
+      points: 1,
+      speedBonus: 0.16,
       options: [
         { text: 'A', selected: true, correct: true },
         { text: 'B', selected: false, correct: false },
@@ -128,6 +132,7 @@ describe('renderRecapModal', () => {
       text: 'Wrong one?',
       answered: true,
       points: 0,
+      speedBonus: 0,
       options: [
         { text: 'A', selected: false, correct: false },
         { text: 'B', selected: true, correct: false },
@@ -139,6 +144,7 @@ describe('renderRecapModal', () => {
       text: 'Skipped one?',
       answered: false,
       points: 0,
+      speedBonus: 0,
       options: [
         { text: 'A', selected: false, correct: false },
         { text: 'B', selected: false, correct: false },
@@ -159,16 +165,15 @@ describe('renderRecapModal', () => {
     expect(view.blocks.slice(2).every((b) => b.type === 'section')).toBe(true)
   })
 
-  it('summarises total points and questions answered', () => {
+  it('summarises total points, the speed bonus apart from them, and questions answered', () => {
     const view = renderRecapModal(recap)
-    expect(sectionText(view.blocks[0])).toContain('1.2 pts')
-    expect(sectionText(view.blocks[0])).toContain('2/3 answered')
+    expect(sectionText(view.blocks[0])).toBe('*1 pt* · ⚡ 0.16 speed bonus · 2/3 answered')
   })
 
   it('marks a selected correct option with ✅ and leaves the rest plain', () => {
     const text = sectionText(renderRecapModal(recap).blocks[2])
     expect(text).toContain('*1. Right one?*')
-    expect(text).toContain('1.2 pts')
+    expect(text).toContain('_1 pt · ⚡ 0.16_')
     expect(text).toContain('✅ A')
     expect(text).not.toContain('💡')
     expect(text).not.toContain('❌')
@@ -176,7 +181,8 @@ describe('renderRecapModal', () => {
 
   it('marks a selected wrong option with ❌ and the missed correct one with 💡', () => {
     const text = sectionText(renderRecapModal(recap).blocks[3])
-    expect(text).toContain('0.0 pts')
+    expect(text).toContain('_0 pts_')
+    expect(text).not.toContain('⚡')
     expect(text).toContain('❌ B')
     expect(text).toContain('💡 C')
     expect(text).not.toContain('✅')
@@ -196,13 +202,14 @@ describe('renderRecapModal', () => {
       ...entry,
       answered: false,
       points: 0,
+      speedBonus: 0,
       options: entry.options.map((o) => ({ ...o, selected: false })),
     }))
 
     const view = renderRecapModal(untouched)
     const questionBlocks = view.blocks.slice(2)
 
-    expect(sectionText(view.blocks[0])).toContain('*0.0 pts*')
+    expect(sectionText(view.blocks[0])).toContain('*0 pts*')
     expect(sectionText(view.blocks[0])).toContain('0/3 answered')
     expect(questionBlocks).toHaveLength(3)
     for (const block of questionBlocks) {
@@ -212,6 +219,38 @@ describe('renderRecapModal', () => {
       expect(text).not.toContain('✅')
       expect(text).not.toContain('❌')
     }
+  })
+})
+
+describe('renderFinalSummary leaderboard', () => {
+  const leaderboardText = (blocks: any[]) => blocks[1].text.text as string
+
+  it('ranks by points, lists the speed bonus separately and says it only breaks ties', () => {
+    const blocks = renderFinalSummary(
+      [
+        { userId: 'U-SPEEDY', score: 9, speedBonus: 1.8, totalAnswered: 10 },
+        { userId: 'U-TIED-SLOW', score: 10, speedBonus: 0.04, totalAnswered: 10 },
+        { userId: 'U-TIED-FAST', score: 10, speedBonus: 0.5, totalAnswered: 10 },
+      ],
+      10,
+      '1234567890.123',
+    )
+
+    expect(leaderboardText(blocks).split('\n').slice(1)).toEqual([
+      '1. <@U-TIED-FAST>: 10 points · ⚡ 0.50 · 10/10 answered',
+      '2. <@U-TIED-SLOW>: 10 points · ⚡ 0.04 · 10/10 answered',
+      '3. <@U-SPEEDY>: 9 points · ⚡ 1.80 · 10/10 answered',
+    ])
+    expect(blocks[2]).toMatchObject({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: expect.stringContaining('only breaks ties') }],
+    })
+  })
+
+  it('skips the tie-break note when nobody played', () => {
+    const blocks = renderFinalSummary([], 3, '1234567890.123')
+    expect(leaderboardText(blocks)).toContain('No participants')
+    expect(blocks.some((b) => b.type === 'context')).toBe(false)
   })
 })
 

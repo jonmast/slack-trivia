@@ -28,7 +28,10 @@ export type Response = {
 
 export type UserScore = {
   userId: string;
+  /** Whole points: one per correct answer. */
   score: number;
+  /** Kept apart from `score`: it only breaks ties on points. */
+  speedBonus: number;
   totalAnswered: number;
 };
 
@@ -43,6 +46,7 @@ export type RecapQuestion = {
   options: RecapOption[];
   answered: boolean;
   points: number;
+  speedBonus: number;
 };
 
 export class QuizCompleteError extends Error {
@@ -54,7 +58,6 @@ export class QuizCompleteError extends Error {
 
 export type QuizState = {
   users: Set<string>;
-  userScores: Map<string, UserScore>;
   currentQuestion: Question | null;
   questions: Question[];
   isActive: boolean;
@@ -74,7 +77,7 @@ export type QuestionSource = {
   get(): TriviaQuestion;
 };
 
-export const QUIZ_SNAPSHOT_VERSION = 1;
+export const QUIZ_SNAPSHOT_VERSION = 2;
 
 export type ResponseSnapshot = {
   userId: string;
@@ -105,7 +108,6 @@ export type QuizSnapshot = {
   currentQuestionIndex: number | null;
   questions: QuestionSnapshot[];
   users: string[];
-  userScores: UserScore[];
 };
 
 export const TIMEOUT_SECS = 5;
@@ -236,6 +238,15 @@ export function isCorrectAnswer(question: Question, answerId: string): boolean {
   return question.correctAnswer.id === answerId;
 }
 
+/** Leaderboard order: most points first, with the speed bonus breaking ties. */
+export function compareRank(a: UserScore, b: UserScore): number {
+  return b.score - a.score || b.speedBonus - a.speedBonus;
+}
+
+type Earned = { points: number; speedBonus: number };
+
+const NOTHING_EARNED: Earned = { points: 0, speedBonus: 0 };
+
 export function getRemainingTime(
   question: Question,
   timeoutSeconds: number = TIMEOUT_SECS,
@@ -273,7 +284,6 @@ export class Quiz {
     this.timeoutSecs = timeoutSecs;
     this.state = {
       users: new Set(),
-      userScores: new Map(),
       currentQuestion: null,
       questions: [],
       isActive: false,
@@ -295,9 +305,6 @@ export class Quiz {
       currentQuestionIndex: currentIndex >= 0 ? currentIndex : null,
       questions: this.state.questions.map(snapshotQuestion),
       users: Array.from(this.state.users),
-      userScores: Array.from(this.state.userScores.values(), (score) => ({
-        ...score,
-      })),
     };
   }
 
@@ -308,7 +315,8 @@ export class Quiz {
    * the rebuilt quiz draws the rest of its questions from.
    */
   static fromSnapshot(snapshot: QuizSnapshot, store: QuestionSource): Quiz {
-    if (snapshot.version !== QUIZ_SNAPSHOT_VERSION) {
+    // Version 1 also stored running score totals, which are simply not read.
+    if (snapshot.version !== QUIZ_SNAPSHOT_VERSION && snapshot.version !== 1) {
       throw new Error(`Unsupported quiz snapshot version ${snapshot.version}`);
     }
 
@@ -322,9 +330,6 @@ export class Quiz {
 
     quiz.state = {
       users: new Set(snapshot.users),
-      userScores: new Map(
-        snapshot.userScores.map((score) => [score.userId, { ...score }]),
-      ),
       currentQuestion,
       questions,
       isActive: snapshot.isActive,
@@ -336,13 +341,6 @@ export class Quiz {
 
   addUser(userId: string): void {
     this.state.users.add(userId);
-    if (!this.state.userScores.has(userId)) {
-      this.state.userScores.set(userId, {
-        userId,
-        score: 0,
-        totalAnswered: 0,
-      });
-    }
   }
 
   removeUser(userId: string): void {
@@ -379,14 +377,14 @@ export class Quiz {
     );
   }
 
-  /** Points a response earns: base point plus speed bonus if correct, else 0. */
-  private pointsFor(
+  /** What a response earns: a point and a speed bonus if correct, else nothing. */
+  private earned(
     question: Question,
     response: Pick<Response, "answerId" | "timestamp">,
-  ): number {
+  ): Earned {
     return isCorrectAnswer(question, response.answerId)
-      ? 1 + this.speedBonus(question, response.timestamp)
-      : 0;
+      ? { points: 1, speedBonus: this.speedBonus(question, response.timestamp) }
+      : NOTHING_EARNED;
   }
 
   /**
@@ -412,32 +410,18 @@ export class Quiz {
       throw new Error("Question not found");
     }
 
-    const existingResponseIndex = question.responses.findIndex(
+    const response: Response = { userId, answerId, timestamp };
+    const existingIndex = question.responses.findIndex(
       (r) => r.userId === userId,
     );
-    const existingResponse =
-      existingResponseIndex >= 0
-        ? question.responses[existingResponseIndex]
-        : null;
 
-    const userScore = this.state.userScores.get(userId);
-
-    const response: Response = { userId, answerId, timestamp };
-
-    if (existingResponse && userScore) {
-      // Changing an answer: refund whatever the previous answer earned.
-      userScore.score -= this.pointsFor(question, existingResponse);
-      question.responses[existingResponseIndex] = response;
+    // Only a user's latest answer to a question counts.
+    if (existingIndex >= 0) {
+      question.responses[existingIndex] = response;
     } else {
       question.responses.push(response);
     }
 
-    const previous = this.state.userScores.get(userId);
-    this.state.userScores.set(userId, {
-      userId,
-      score: (previous?.score ?? 0) + this.pointsFor(question, response),
-      totalAnswered: (previous?.totalAnswered ?? 0) + (existingResponse ? 0 : 1),
-    });
     return isCorrectAnswer(question, answerId);
   }
 
@@ -445,6 +429,7 @@ export class Quiz {
   getRecap(userId: string): RecapQuestion[] {
     return this.state.questions.map((question) => {
       const response = question.responses.find((r) => r.userId === userId);
+      const earned = response ? this.earned(question, response) : NOTHING_EARNED;
       return {
         text: question.question.question.text,
         options: question.answers.map((answer) => ({
@@ -453,7 +438,8 @@ export class Quiz {
           correct: isCorrectAnswer(question, answer.id),
         })),
         answered: !!response,
-        points: response ? this.pointsFor(question, response) : 0,
+        points: earned.points,
+        speedBonus: earned.speedBonus,
       };
     });
   }
@@ -466,12 +452,39 @@ export class Quiz {
     return [...this.state.questions];
   }
 
+  /**
+   * Every participant's totals, summed from the answers that currently count.
+   * Participants are the users who joined plus anyone who answered.
+   */
   getUserScores(): UserScore[] {
-    return Array.from(this.state.userScores.values());
+    const scores = new Map<string, UserScore>();
+    const scoreFor = (userId: string): UserScore => {
+      let score = scores.get(userId);
+      if (!score) {
+        score = { userId, score: 0, speedBonus: 0, totalAnswered: 0 };
+        scores.set(userId, score);
+      }
+      return score;
+    };
+
+    for (const userId of this.state.users) {
+      scoreFor(userId);
+    }
+    for (const question of this.state.questions) {
+      for (const response of question.responses) {
+        const score = scoreFor(response.userId);
+        const earned = this.earned(question, response);
+        score.score += earned.points;
+        score.speedBonus += earned.speedBonus;
+        score.totalAnswered += 1;
+      }
+    }
+
+    return Array.from(scores.values());
   }
 
   getUserScore(userId: string): UserScore | undefined {
-    return this.state.userScores.get(userId);
+    return this.getUserScores().find((score) => score.userId === userId);
   }
 
   isActive(): boolean {
@@ -487,7 +500,7 @@ export class Quiz {
   }
 
   getLeaderboard(): UserScore[] {
-    return this.getUserScores().sort((a, b) => b.score - a.score);
+    return this.getUserScores().sort(compareRank);
   }
 
   isComplete(): boolean {

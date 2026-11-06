@@ -28,16 +28,20 @@ The screen that replaces the quiz message when the last question's results expir
 _Avoid_: end screen, results
 
 **Recap**:
-A participant's private, per-question account of a finished quiz: every option of every question, marked by whether they picked it and whether it was correct, with the points earned. Opened on demand from the final summary.
+A participant's private, per-question account of a finished quiz: every option of every question, marked by whether they picked it and whether it was correct, with the points and speed bonus earned. Opened on demand from the final summary.
 _Avoid_: review, results, scorecard, answer sheet
 
+**Points**:
+One for each correct answer, whenever it arrives before the quiz is finished. The only thing participants are ranked by.
+
 **Speed bonus**:
-Extra fractional points awarded for a correct answer in proportion to how quickly it was given.
+A tie-breaker earned by a correct answer, larger the more of the answer window was left when it was given. It is not points and never adds to them: it only orders participants with equal points, and is always shown apart from them.
+_Avoid_: bonus points
 
 **Channel object**:
 The Durable Object that owns one Slack channel's quiz: its stored state, its alarms and its calls to Slack. One per channel, addressed by channel ID. The only place quiz logic runs.
 _Avoid_: instance, actor, worker
 
 **Leaderboard**:
-Participants ranked by total points.
+Participants ranked by points, with the speed bonus breaking ties.
 _Avoid_: scoreboard, standings
