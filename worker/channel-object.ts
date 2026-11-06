@@ -16,8 +16,6 @@ import { ChannelStorage, QuizStore } from "./quiz-store";
 import { SlackClient } from "./slack-client";
 import { TriviaApi } from "./trivia-api";
 
-export type { StartQuizResult } from "./channel-quiz";
-
 /** Everything a channel quiz program runs against, built from the object's bindings. */
 function channelLayer(ctx: DurableObjectState, env: Env) {
   const platform = Layer.mergeAll(
@@ -73,9 +71,11 @@ export class ChannelObject extends DurableObject<Env> {
    *
    * Deliberately synchronous: nothing is awaited between the state change and
    * the write, so the write coalesces into one transaction and the Durable
-   * Object's output gate holds the Slack ack until it commits. That is why it
-   * runs with `runSync`, which throws rather than suspend if the program ever
-   * tried to wait on anything.
+   * Object's output gate holds the Slack ack until it commits. It runs with
+   * `runSync` as a tripwire, not a guard: a program that waited on anything
+   * would make the call throw `AsyncFiberError`, surfacing the mistake in
+   * tests, but the suspended fiber is left running and could still write
+   * after the RPC has thrown.
    */
   submitAnswer(
     userId: string,

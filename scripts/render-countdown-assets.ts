@@ -5,7 +5,7 @@
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderCountdownGif, COUNTDOWN_LEAD_SECS } from "../src/countdown";
-import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/trivia-core";
+import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/timing";
 
 const outDir = join(__dirname, "..", "public", "countdown");
 

@@ -29,7 +29,7 @@ export type StartQuizResult = {
 };
 
 /** The object was asked to edit a message before it learned its channel. */
-export class ChannelUnknownError extends Schema.TaggedError<ChannelUnknownError>()(
+class ChannelUnknownError extends Schema.TaggedError<ChannelUnknownError>()(
   "ChannelUnknownError",
   {},
 ) {
@@ -38,7 +38,7 @@ export class ChannelUnknownError extends Schema.TaggedError<ChannelUnknownError>
   }
 }
 
-export class NoCurrentQuestionError extends Schema.TaggedError<NoCurrentQuestionError>()(
+class NoCurrentQuestionError extends Schema.TaggedError<NoCurrentQuestionError>()(
   "NoCurrentQuestionError",
   {},
 ) {
@@ -60,7 +60,7 @@ function questionSource(queue: TriviaQuestion[]): QuestionSource {
 }
 
 /** Rebuild a stored quiz; later questions are drawn from `pending`, consuming it. */
-function restore(record: QuizRecord, pending = [...record.pending]) {
+function restore(record: QuizRecord, pending: TriviaQuestion[]) {
   return Quiz.fromSnapshot(record, questionSource(pending));
 }
 
@@ -119,17 +119,14 @@ export const startQuiz = Effect.fn("startQuiz")(
 
     yield* store.setAlarm(deadline);
 
-    const started: StartQuizResult = {
-      ok: true,
-      text: "Quiz started!",
-      messageTs,
-    };
-
-    return started;
+    return { ok: true, text: "Quiz started!", messageTs };
   },
   Effect.catchTags({
     InvalidQuizzoArgsError: (error) => Effect.succeed(refuse(error.message)),
-    TriviaApiError: () => Effect.succeed(refuse(NOT_ENOUGH_QUESTIONS)),
+    TriviaApiError: (error) =>
+      Effect.logError("Failed to fetch trivia questions:", error).pipe(
+        Effect.as(refuse(NOT_ENOUGH_QUESTIONS)),
+      ),
     SlackRequestError: postFailed,
     SlackApiError: postFailed,
   }),
@@ -174,9 +171,14 @@ export const submitAnswer = Effect.fn("submitAnswer")(
     }
 
     const { messageTs, record } = running.value;
-    const quiz = yield* restore(record);
+    const quiz = yield* restore(record, [...record.pending]);
 
-    yield* quiz.submitAnswer(userId, answerId, new Date(answeredAt), questionId);
+    // Slack's click time unless it did not parse; NaN would be stored as `null`.
+    const at = Number.isFinite(answeredAt)
+      ? answeredAt
+      : yield* Clock.currentTimeMillis;
+
+    yield* quiz.submitAnswer(userId, answerId, new Date(at), questionId);
     yield* store.save(messageTs, { ...record, ...quiz.toSnapshot() });
   },
   (effect, userId) =>
@@ -205,7 +207,7 @@ export const getRecap = Effect.fn("getRecap")(
 
     if (Option.isNone(record)) return null;
 
-    const quiz = yield* restore(record.value);
+    const quiz = yield* restore(record.value, [...record.value.pending]);
 
     if (!quiz.getUserScore(userId)) return null;
 
@@ -254,7 +256,7 @@ const showResults = Effect.fn("showResults")(function* (
 ) {
   const store = yield* QuizStore;
   const { resultsSecs } = yield* WorkerConfig;
-  const quiz = yield* restore(record);
+  const quiz = yield* restore(record, [...record.pending]);
   const question = quiz.getCurrentQuestion();
 
   if (!question) {
@@ -360,7 +362,7 @@ const abandon = Effect.fn("abandon")(function* (
 const complete = Effect.fn("complete")(
   function* (messageTs: string, record: QuizRecord) {
     const store = yield* QuizStore;
-    const quiz = yield* restore(record);
+    const quiz = yield* restore(record, [...record.pending]);
 
     quiz.endQuiz();
 
@@ -443,22 +445,24 @@ export const alarm: Effect.Effect<
   );
 
   yield* transition.pipe(
-    // A message that can no longer be updated, a question source that ran
-    // dry or a snapshot that cannot be rebuilt ends the quiz rather than
-    // leaving the channel in a half state.
+    // A message that can no longer be updated or a question source that ran
+    // dry ends the quiz rather than leaving the channel in a half state.
     Effect.catchTag(
       [
         "SlackApiError",
         "ChannelUnknownError",
         "QuestionsExhaustedError",
         "NoCurrentQuestionError",
-        "UnsupportedSnapshotVersionError",
-        "InvalidQuizSnapshotError",
       ],
       (error) =>
         Effect.logError("Quiz failed to advance; ending quiz:", error).pipe(
           Effect.andThen(complete(messageTs, record)),
         ),
+    ),
+    // A snapshot that cannot be rebuilt has no leaderboard to end on.
+    Effect.catchTag(
+      ["UnsupportedSnapshotVersionError", "InvalidQuizSnapshotError"],
+      (error) => abandon(messageTs, error),
     ),
   );
 }).pipe(
@@ -466,6 +470,9 @@ export const alarm: Effect.Effect<
   // channel forever.
   Effect.catchTag("UndecodableQuizRecordError", (error) =>
     abandon(error.messageTs, error),
+  ),
+  Effect.tapError((error) =>
+    Effect.logWarning(`${error.message}; the alarm will be retried:`, error),
   ),
   Effect.withSpan("alarm"),
 );

@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import {
   COUNTDOWN_ORIGIN,
   POST_MESSAGE_TS,
+  SLACK_AUTH_HEADERS,
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
@@ -30,7 +31,7 @@ let postedBodies: SlackMessageBody[] = []
 function interceptPostMessage(reply: PostMessageReply = { ok: true, ts: POST_MESSAGE_TS }): void {
   fetchMock
     .get('https://slack.com')
-    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
     .reply(200, (options) => {
       postedBodies.push(parseSlackMessage(options.body))
 

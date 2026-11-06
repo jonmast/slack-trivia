@@ -7,9 +7,9 @@ import {
   isCorrectAnswer,
   getRemainingTime,
   hasExpired,
-  TIMEOUT_SECS,
   TriviaQuestion
 } from '../src/trivia-core'
+import { TIMEOUT_SECS } from '../src/timing'
 
 describe('Utility Functions', () => {
   describe('withId', () => {

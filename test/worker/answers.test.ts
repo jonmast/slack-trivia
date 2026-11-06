@@ -2,6 +2,7 @@ import {
   createExecutionContext,
   env,
   fetchMock,
+  runInDurableObject,
   waitOnExecutionContext,
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
@@ -195,6 +196,47 @@ describe('recording answers', () => {
     // question 2 it would have matched nothing and scored zero.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
       '1. <@U-LATE>: 1 point · ⚡ 0.00 · 1/2 answered',
+    ])
+  })
+
+  it('times an answer whose click time did not parse by when it arrived', async () => {
+    const stub = await start('C-NAN-TIME', `1 ${WINDOW}`, 1)
+    const question = slack.calls[0].blocks
+
+    // Half the window has gone when the click arrives; the worker turns an
+    // unparsable `action_ts` into NaN.
+    await sleep(500)
+    await stub.submitAnswer('U-NAN', optionValue(question, 'Correct 1'), blockId(question), NaN)
+
+    await waitForCalls(slack, 3)
+    // The quiz ran to its summary, and the answer earned its point and the
+    // bonus for when it reached the object.
+    const [entry, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
+    expect(rest).toEqual([])
+    expect(entry).toMatchObject({ rank: 1, userId: 'U-NAN', points: 1, answered: '1/1' })
+    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 1)
+  })
+
+  it('records an answer synchronously, returning nothing to await', async () => {
+    const stub = await start('C-SYNC', `1 ${WINDOW}`, 1)
+    const question = slack.calls[0].blocks
+
+    // Wrapped so it is not awaited: a Promise here would mean something is
+    // awaited between the state change and its write.
+    const { returned } = await runInDurableObject(stub, (instance) => ({
+      returned: instance.submitAnswer(
+        'U-SYNC',
+        optionValue(question, 'Correct 1'),
+        blockId(question),
+        Date.now(),
+      ),
+    }))
+
+    expect(returned).toBeUndefined()
+
+    await waitForCalls(slack, 3)
+    expect(finalLeaderboard(slack.lastBlocks).map(parseEntry)).toMatchObject([
+      { userId: 'U-SYNC', points: 1 },
     ])
   })
 

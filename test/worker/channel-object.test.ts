@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import {
   COUNTDOWN_ORIGIN,
   POST_MESSAGE_TS,
+  SLACK_AUTH_HEADERS,
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
@@ -14,7 +15,7 @@ function interceptPostMessage(ts = POST_MESSAGE_TS) {
   let body: SlackMessageBody | undefined
   fetchMock
     .get('https://slack.com')
-    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
     .reply(200, (opts) => {
       body = parseSlackMessage(opts.body)
 
@@ -111,7 +112,7 @@ describe('ChannelObject.startQuiz', () => {
     interceptTrivia(createTriviaQuestions(2))
     fetchMock
       .get('https://slack.com')
-      .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+      .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
       .reply(200, { ok: false, error: 'channel_not_found' })
 
     const result = await channelObject('C4').startQuiz('C4', '2 5s', COUNTDOWN_ORIGIN)

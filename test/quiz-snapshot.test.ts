@@ -194,6 +194,20 @@ describe('Quiz snapshot', () => {
     expect(rehydrated.toSnapshot().version).toBe(2)
   })
 
+  it('reads an answer stored without a time as late: its point, no speed bonus', () => {
+    const { quiz, source, q1 } = quizInProgress()
+    const stored = JSON.parse(JSON.stringify(quiz.toSnapshot()))
+    // What JSON.stringify writes for an answer time of NaN.
+    stored.questions[0].responses[0].at = null
+
+    const snapshot = decodeStored(JSON.stringify(stored))
+    expect(snapshot.questions[0].responses[0].at).toBeGreaterThan(q1.timestamp.getTime() + TIMEOUT * 1000)
+
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(snapshot, source))
+    expect(rehydrated.getRecap('u1')[0]).toMatchObject({ answered: true, points: 1, speedBonus: 0 })
+    expect(rehydrated.getUserScore('u1')!.score).toBe(2)
+  })
+
   it('draws its remaining questions from the source it is rebuilt with', () => {
     const { quiz } = quizInProgress()
     const [, , thirdQuestion] = triviaQuestions(3)

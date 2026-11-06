@@ -1,5 +1,5 @@
 import { Config, Context, Effect, Layer, Redacted, Schema } from "effect";
-import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/trivia-core";
+import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/timing";
 
 /**
  * Countdown GIFs are pre-rendered for every whole second up to
@@ -24,6 +24,9 @@ export class WorkerConfig extends Context.Service<
     WorkerConfig,
     Effect.gen(function* () {
       return WorkerConfig.of({
+        // Failing here would fail every RPC, answers and recaps included,
+        // since the object builds its services once; a missing token only
+        // fails the Slack calls, which Slack refuses as `not_authed`.
         slackBotToken: yield* Config.Redacted("SLACK_BOT_TOKEN").pipe(
           Config.withDefault(Redacted.make("")),
         ),

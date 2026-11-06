@@ -1,4 +1,5 @@
 import { env, fetchMock } from 'cloudflare:test'
+import { Schema } from 'effect'
 import type { TriviaQuestion } from '../../src/trivia-core'
 
 /** Shared plumbing for worker tests: the channel stub and the fake Slack/Trivia network. */
@@ -44,6 +45,7 @@ export type SlackMessageBody = {
   channel: string
   text: string
   ts?: string
+  /** Left loose: tests reach deep into whichever block they check. */
   blocks: any[]
 }
 
@@ -57,37 +59,49 @@ export type SlackResponse = {
   text?: string
 }
 
+/** The bot token the test bindings configure, as every Web API call must carry it. */
+export const SLACK_AUTH_HEADERS = { authorization: 'Bearer xoxb-test-token' }
+
 /**
- * The text of a Slack request body captured by `fetchMock`. The Worker builds
- * every Slack body as text (`JSON.stringify` for the JSON APIs,
- * `URLSearchParams` for the form APIs), so the capture is a string rather than
- * a stream.
+ * The text of a request body captured by `fetchMock`. Whatever the Worker
+ * sent — Effect's HttpClient sends JSON as a `Uint8Array`, the Slack framework
+ * form-encodes — vitest-pool-workers buffers it and hands reply callbacks the
+ * decoded text; this fails if that ever changes.
  */
 export function requestBodyText(body: BodyInit | undefined): string {
-  // SAFETY: the Worker's own Slack calls post strings, as described above.
-  return body as string
+  return Schema.decodeUnknownSync(Schema.String)(body)
 }
+
+const decodeSlackMessage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      channel: Schema.String,
+      text: Schema.String,
+      ts: Schema.optional(Schema.String),
+      blocks: Schema.Array(Schema.Unknown),
+    }),
+  ),
+)
+
+const decodeSlackResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      response_type: Schema.optional(Schema.String),
+      text: Schema.optional(Schema.String),
+    }),
+  ),
+)
 
 /** Parse the JSON body the Worker posts to `chat.postMessage`/`chat.update`. */
 export function parseSlackMessage(body: BodyInit | undefined): SlackMessageBody {
-  const parsed = JSON.parse(requestBodyText(body))
+  const message = decodeSlackMessage(requestBodyText(body))
 
-  return {
-    channel: parsed.channel,
-    text: parsed.text,
-    blocks: parsed.blocks,
-    ts: parsed.ts,
-  }
+  return { ...message, blocks: [...message.blocks] }
 }
 
 /** Parse the reply the Worker posts to a `response_url`. */
 export function parseSlackResponse(body: BodyInit | undefined): SlackResponse {
-  const parsed = JSON.parse(requestBodyText(body))
-
-  return {
-    response_type: parsed.response_type,
-    text: parsed.text,
-  }
+  return decodeSlackResponse(requestBodyText(body))
 }
 
 /**
@@ -126,7 +140,7 @@ export class SlackRecorder {
   install(): void {
     fetchMock
       .get('https://slack.com')
-      .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+      .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
       .reply(200, (options) => {
         const body = parseSlackMessage(options.body)
         this.calls.push({ method: 'chat.postMessage', ...body })
@@ -139,7 +153,7 @@ export class SlackRecorder {
 
     fetchMock
       .get('https://slack.com')
-      .intercept({ path: '/api/chat.update', method: 'POST' })
+      .intercept({ path: '/api/chat.update', method: 'POST', headers: SLACK_AUTH_HEADERS })
       .reply((options) => {
         const body = parseSlackMessage(options.body)
         const call: SlackCall = { method: 'chat.update', ...body }

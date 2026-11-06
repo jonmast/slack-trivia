@@ -6,7 +6,7 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import { parseSlackResponse, slackRequest, type SlackResponse } from './fixtures'
+import { SLACK_AUTH_HEADERS, parseSlackResponse, slackRequest, type SlackResponse } from './fixtures'
 
 const RESPONSE_URL_ORIGIN = 'https://hooks.slack.test'
 const RESPONSE_URL_PATH = '/commands/T1/123/abc'
@@ -57,7 +57,7 @@ function interceptTrivia(count: number) {
 function interceptPostMessage(ts = '1234567890.123') {
   fetchMock
     .get('https://slack.com')
-    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
     .reply(200, { ok: true, ts })
 }
 

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import type { AnyMessageBlock } from "slack-cloudflare-workers";
 import { WorkerConfig } from "./config";
 
@@ -12,10 +12,17 @@ const SLACK_API_URL = "https://slack.com/api";
  */
 export class SlackRequestError extends Schema.TaggedError<SlackRequestError>()(
   "SlackRequestError",
-  { method: Schema.String, cause: Schema.Defect() },
+  {
+    method: Schema.String,
+    /** The HTTP status Slack answered with; absent when there was no response. */
+    status: Schema.optional(Schema.Number),
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return `${this.method} request failed`;
+    return this.status === undefined
+      ? `${this.method} request failed`
+      : `${this.method} HTTP ${this.status}`;
   }
 }
 
@@ -98,7 +105,16 @@ export class SlackClient extends Context.Service<
           .pipe(
             Effect.flatMap((response) => response.json),
             Effect.flatMap(Schema.decodeUnknownEffect(reply)),
-            Effect.mapError((cause) => new SlackRequestError({ method, cause })),
+            Effect.mapError(
+              (cause) =>
+                new SlackRequestError({
+                  method,
+                  status: HttpClientError.isHttpClientError(cause)
+                    ? cause.response?.status
+                    : undefined,
+                  cause,
+                }),
+            ),
           );
 
       const refused = (method: string, error: string | undefined) =>

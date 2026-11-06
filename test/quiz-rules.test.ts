@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import {
   Quiz,
   SPEED_BONUS_MAX,
   parseQuizzoArgs,
   InvalidQuizzoArgsError,
+  QuestionNotFoundError,
+  QuestionsExhaustedError,
   MAX_QUESTIONS,
-  MAX_TIMEOUT_SECS,
   type QuestionSource,
 } from '../src/trivia-core'
+import { MAX_TIMEOUT_SECS } from '../src/timing'
 import { createQuestionSource, failureOf } from './test-utils'
 
 describe('parseQuizzoArgs', () => {
@@ -102,6 +104,20 @@ describe('Quiz answer rules', () => {
     Effect.runSync(quiz.submitAnswer('u1', wrong(q1), new Date(q1.timestamp.getTime() + 3000), q1.question.id))
     Effect.runSync(quiz.submitAnswer('u1', wrong(q2), new Date(q2.timestamp.getTime() + 3000), q2.question.id))
     expect(quiz.getUserScore('u1')).toMatchObject({ score: 0, speedBonus: 0, totalAnswered: 2 })
+  })
+
+  it('fails with a typed error when there is no question to answer', () => {
+    const quiz = new Quiz({ get: () => Option.none() }, 3, 10)
+    // Started, but the source was dry: active with no current question.
+    expect(failureOf(quiz.startQuiz())).toBeInstanceOf(QuestionsExhaustedError)
+
+    const current = failureOf(quiz.submitAnswer('u1', 'a1', new Date()))
+    expect(current).toBeInstanceOf(QuestionNotFoundError)
+    expect(current).toMatchObject({ questionId: undefined })
+
+    const named = failureOf(quiz.submitAnswer('u1', 'a1', new Date(), 'nowhere'))
+    expect(named).toBeInstanceOf(QuestionNotFoundError)
+    expect(named).toMatchObject({ questionId: 'nowhere' })
   })
 })
 

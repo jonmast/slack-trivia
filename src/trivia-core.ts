@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Schema, SchemaGetter } from "effect";
+import { MAX_TIMEOUT_SECS, TIMEOUT_SECS } from "./timing";
 
 /**
  * A question as The Trivia API returns it, cut down to the fields the app
@@ -84,7 +85,7 @@ export class NoActiveQuizError extends Schema.TaggedError<NoActiveQuizError>()(
 
 export class QuestionNotFoundError extends Schema.TaggedError<QuestionNotFoundError>()(
   "QuestionNotFoundError",
-  { questionId: Schema.optionalKey(Schema.String) },
+  { questionId: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
     return "Question not found";
@@ -144,14 +145,45 @@ export const ResponseSnapshot = Schema.Struct({
 
 export type ResponseSnapshot = typeof ResponseSnapshot.Type;
 
-export const QuestionSnapshot = Schema.Struct({
+const questionSnapshotFields = {
   question: TriviaQuestion,
   answers: Schema.Array(Answer),
   correctAnswerId: Schema.String,
   /** Epoch milliseconds the answer window started at. */
   startedAt: Schema.Number,
-  responses: Schema.Array(ResponseSnapshot),
-});
+};
+
+/**
+ * Older rows stored an answer time that was not a number (Slack sent an
+ * `action_ts` that did not parse) as `null`. Such an answer is read back as
+ * given after every answer window has closed: it keeps its point and earns no
+ * speed bonus.
+ */
+export const QuestionSnapshot = Schema.Struct({
+  ...questionSnapshotFields,
+  responses: Schema.Array(
+    Schema.Struct({ ...ResponseSnapshot.fields, at: Schema.NullOr(Schema.Number) }),
+  ),
+}).pipe(
+  Schema.decodeTo(
+    Schema.toType(
+      Schema.Struct({
+        ...questionSnapshotFields,
+        responses: Schema.Array(ResponseSnapshot),
+      }),
+    ),
+    {
+      decode: SchemaGetter.transform((stored) => ({
+        ...stored,
+        responses: stored.responses.map((response) => ({
+          ...response,
+          at: response.at ?? stored.startedAt + MAX_TIMEOUT_SECS * 1000,
+        })),
+      })),
+      encode: SchemaGetter.transform((snapshot) => snapshot),
+    },
+  ),
+);
 
 export type QuestionSnapshot = typeof QuestionSnapshot.Type;
 
@@ -179,13 +211,8 @@ export type QuizProgress = {
   total: number;
 };
 
-export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
-export const MAX_TIMEOUT_SECS = 60;
-
-/** How long the per-question results screen stays up before the next question. */
-export const RESULTS_SECS = 5;
 
 export type QuizzoArgs = { numQuestions: number; timeoutSecs: number };
 

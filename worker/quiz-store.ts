@@ -11,7 +11,7 @@ export class ChannelStorage extends Context.Service<
  * Where a quiz is in its cycle. A `question` phase ends at the answer window's
  * deadline, a `results` phase that many seconds later; `complete` sets no alarm.
  */
-export const Phase = Schema.Literals(["question", "results", "complete"]);
+const Phase = Schema.Literals(["question", "results", "complete"]);
 
 /**
  * The `state` column: the quiz snapshot plus what only the channel object
@@ -31,7 +31,7 @@ export const QuizRecord = Schema.Struct({
 export type QuizRecord = typeof QuizRecord.Type;
 
 /** The channel's running quiz, keyed by the message it is played in. */
-export type RunningQuiz = {
+type RunningQuiz = {
   messageTs: string;
   record: QuizRecord;
 };

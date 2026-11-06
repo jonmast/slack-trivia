@@ -17,11 +17,10 @@ Installed paths:
 
 Configuration:
 
-- `oxlint.config.ts` registers both plugins and enables every generic rule plus `oxc/no-accumulating-spread`, and every opt-in Effect rule.
+- `oxlint.config.ts` registers both plugins and enables every generic rule plus `oxc/no-accumulating-spread`, and every opt-in Effect rule (the repository depends on `effect` v4 directly; see `docs/adr/0002-effect.md`).
 - Dependencies: `oxlint@1.91.0` and `@oxlint/plugins@1.91.0`, pinned exactly as devDependencies.
 
 Deviations from upstream:
 
-- The Effect plugin is enabled even though this repository has no direct `effect` dependency. The user explicitly requested Effect adoption in a later phase; upstream allows the opt-in group when the user requests it.
 - Extra `ignorePatterns` beyond the upstream agent-directory list: `dist/**`, `node_modules/**`, `.wrangler/**`, `public/**` (generated output in this repository).
 - No source files were modified. Upstream test suites are not vendored (the skill bundle does not include them); rule behavior is therefore exercised only through this repository's own lint run.

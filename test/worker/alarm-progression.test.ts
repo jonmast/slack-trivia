@@ -1,5 +1,5 @@
 import { fetchMock, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import type { ChannelObject } from '../../worker/channel-object'
 import type { Question, TriviaQuestion } from '../../src/trivia-core'
 import { renderChannelResults, renderFinalSummary } from '../../src/slack-ui'
@@ -236,11 +236,16 @@ describe('alarm-driven progression', () => {
       return 429
     }
 
+    const warn = vi.spyOn(console, 'warn')
     const stub = await start('C-RATE-LIMIT', `2 ${WINDOW}`, 2)
 
     // The first results edit is rate-limited; the quiz must survive it.
     await waitForCalls(slack, 2)
     expect(slack.updates).toHaveLength(1)
+    await sleep(100)
+    // ...and the failure that made the alarm reject is on record.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('chat.update HTTP 429'))
+    warn.mockRestore()
 
     // The platform retries the alarm; this time the edit lands.
     await fireAlarm(stub)
