@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { Schema } from 'effect'
 import {
   withId,
   shuffleAnswers,
@@ -7,7 +8,7 @@ import {
   getRemainingTime,
   hasExpired,
   TIMEOUT_SECS,
-  type TriviaQuestion
+  TriviaQuestion
 } from '../src/trivia-core'
 
 describe('Utility Functions', () => {
@@ -142,5 +143,32 @@ describe('Question Logic', () => {
       
       expect(hasExpired(question)).toBe(true)
     })
+  })
+})
+
+describe('TriviaQuestion', () => {
+  const decode = Schema.decodeUnknownSync(TriviaQuestion)
+
+  const payload = {
+    category: 'science',
+    id: '622a1c357cc59eab6f94fd8e',
+    correctAnswer: 'Mercury',
+    incorrectAnswers: ['Venus', 'Mars', 'Jupiter'],
+    question: { text: 'Which planet is closest to the Sun?' },
+    tags: ['space'],
+    type: 'text_choice',
+    difficulty: 'easy',
+    regions: [],
+    isNiche: false,
+  }
+
+  it('decodes a question as The Trivia API sends it', () => {
+    expect(decode(payload)).toEqual(payload)
+  })
+
+  it('rejects a payload it could not ask', () => {
+    expect(() => decode({ ...payload, incorrectAnswers: ['Venus', 'Mars'] })).toThrow(Schema.SchemaError)
+    expect(() => decode({ ...payload, question: 'Which planet?' })).toThrow(Schema.SchemaError)
+    expect(() => decode({ ...payload, type: 'image_choice' })).toThrow(Schema.SchemaError)
   })
 })

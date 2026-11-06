@@ -1,15 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
+import { Effect, Option, Result, Schema } from "effect";
 import {
   MAX_TIMEOUT_SECS,
   RESULTS_SECS,
   Quiz,
   QuizCompleteError,
+  QuizSnapshot,
+  TriviaQuestion,
   parseQuizzoArgs,
   type Question,
   type QuestionSource,
-  type QuizSnapshot,
   type RecapQuestion,
-  type TriviaQuestion,
 } from "../src/trivia-core";
 import {
   renderChannelQuestion,
@@ -39,7 +40,7 @@ export type StartQuizResult = {
  * Where a quiz is in its cycle. A `question` phase ends at the answer window's
  * deadline, a `results` phase that many seconds later; `complete` sets no alarm.
  */
-type Phase = "question" | "results" | "complete";
+const Phase = Schema.Literals(["question", "results", "complete"]);
 
 /**
  * The `state` column: the quiz snapshot plus what only the channel object
@@ -48,23 +49,28 @@ type Phase = "question" | "results" | "complete";
  * origin the countdown GIFs are served from (there is no request to derive it
  * from when an alarm fires).
  */
-type QuizRecord = QuizSnapshot & {
-  phase: Phase;
-  deadline: number;
-  pending: TriviaQuestion[];
-  origin: string;
-};
+const QuizRecord = Schema.Struct({
+  ...QuizSnapshot.fields,
+  phase: Phase,
+  deadline: Schema.Number,
+  pending: Schema.Array(TriviaQuestion),
+  origin: Schema.String,
+});
+
+type QuizRecord = typeof QuizRecord.Type;
+
+const decodeQuizRecord = Schema.decodeUnknownSync(
+  Schema.fromJsonString(QuizRecord),
+);
+
+const decodeTriviaQuestions = Schema.decodeUnknownSync(
+  Schema.Array(TriviaQuestion),
+);
 
 /** Hands out already-fetched questions in order, consuming the queue. */
 function questionSource(queue: TriviaQuestion[]): QuestionSource {
   return {
-    get(): TriviaQuestion {
-      const next = queue.shift();
-
-      if (!next) throw new Error("No questions available");
-
-      return next;
-    },
+    get: () => Option.fromUndefinedOr(queue.shift()),
   };
 }
 
@@ -136,13 +142,13 @@ export class ChannelObject extends DurableObject<Env> {
     this.rememberChannel(channelId);
 
     // 1. Parse arguments.
-    const parsed = parseQuizzoArgs(text);
+    const parsed = Effect.runSync(Effect.result(parseQuizzoArgs(text)));
 
-    if (!parsed.ok) {
-      return { ok: false, text: parsed.error };
+    if (Result.isFailure(parsed)) {
+      return { ok: false, text: parsed.failure.message };
     }
 
-    const { numQuestions, timeoutSecs } = parsed.args;
+    const { numQuestions, timeoutSecs } = parsed.success;
 
     // 2. Reject if a quiz is already running in this channel.
     if (this.hasRunningQuiz()) {
@@ -153,7 +159,7 @@ export class ChannelObject extends DurableObject<Env> {
     }
 
     // 3. Fetch exactly the requested number of questions in one API request.
-    let triviaQuestions: TriviaQuestion[];
+    let triviaQuestions: readonly TriviaQuestion[];
 
     try {
       const url = `${TRIVIA_API_URL}?limit=${numQuestions}`;
@@ -163,8 +169,7 @@ export class ChannelObject extends DurableObject<Env> {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const data = await response.json();
-      triviaQuestions = Array.isArray(data) ? data : [];
+      triviaQuestions = decodeTriviaQuestions(await response.json());
     } catch {
       return {
         ok: false,
@@ -184,7 +189,7 @@ export class ChannelObject extends DurableObject<Env> {
 
     // 5. Create the quiz and post question 1.
     const quiz = new Quiz(questionSource(queue), numQuestions, timeoutSecs);
-    const question = quiz.startQuiz();
+    const question = Effect.runSync(quiz.startQuiz());
 
     // Render blocks using the existing channel question renderer.
     const gifUrl = countdownGifUrl(origin, timeoutSecs, question.question.id);
@@ -238,11 +243,10 @@ export class ChannelObject extends DurableObject<Env> {
     //    The snapshot records the deadline so the alarm handler knows when to
     //    transition to results. The question clock (timestamp) is set to NOW
     //    so the speed bonus and GIF sync with Slack's render time.
-    const snapshot = quiz.toSnapshot();
-    snapshot.questions[0].startedAt = Date.now();
+    question.timestamp = new Date();
 
     const record: QuizRecord = {
-      ...snapshot,
+      ...quiz.toSnapshot(),
       phase: "question",
       deadline,
       // Whatever `quiz.startQuiz()` did not take is what later questions come
@@ -291,10 +295,15 @@ export class ChannelObject extends DurableObject<Env> {
     }
 
     const { messageTs, record } = running;
-    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+
+    const quiz = Effect.runSync(
+      Quiz.fromSnapshot(record, questionSource([...record.pending])),
+    );
 
     try {
-      quiz.submitAnswer(userId, answerId, new Date(answeredAt), questionId);
+      Effect.runSync(
+        quiz.submitAnswer(userId, answerId, new Date(answeredAt), questionId),
+      );
     } catch (error) {
       console.error(`Failed to record answer from ${userId}:`, error);
 
@@ -325,8 +334,11 @@ export class ChannelObject extends DurableObject<Env> {
 
     if (!row) return null;
 
-    const record: QuizRecord = JSON.parse(row.state);
-    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+    const record = decodeQuizRecord(row.state);
+
+    const quiz = Effect.runSync(
+      Quiz.fromSnapshot(record, questionSource([...record.pending])),
+    );
 
     if (!quiz.getUserScore(userId)) return null;
 
@@ -387,7 +399,10 @@ export class ChannelObject extends DurableObject<Env> {
     messageTs: string,
     record: QuizRecord,
   ): Promise<void> {
-    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+    const quiz = Effect.runSync(
+      Quiz.fromSnapshot(record, questionSource([...record.pending])),
+    );
+
     const question = quiz.getCurrentQuestion();
 
     if (!question) {
@@ -427,12 +442,15 @@ export class ChannelObject extends DurableObject<Env> {
   /** Replace the results with the next question, or finish the quiz. */
   private async advance(messageTs: string, record: QuizRecord): Promise<void> {
     const pending = [...record.pending];
-    const quiz = Quiz.fromSnapshot(record, questionSource(pending));
+
+    const quiz = Effect.runSync(
+      Quiz.fromSnapshot(record, questionSource(pending)),
+    );
 
     let question: Question;
 
     try {
-      question = quiz.nextQuestion();
+      question = Effect.runSync(quiz.nextQuestion());
     } catch (error) {
       if (error instanceof QuizCompleteError) {
         await this.complete(messageTs, record);
@@ -488,7 +506,10 @@ export class ChannelObject extends DurableObject<Env> {
     messageTs: string,
     record: QuizRecord,
   ): Promise<void> {
-    const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+    const quiz = Effect.runSync(
+      Quiz.fromSnapshot(record, questionSource([...record.pending])),
+    );
+
     quiz.endQuiz();
 
     this.sql.exec(
@@ -581,7 +602,7 @@ export class ChannelObject extends DurableObject<Env> {
 
     if (!row) return null;
 
-    return { messageTs: row.message_ts, record: JSON.parse(row.state) };
+    return { messageTs: row.message_ts, record: decodeQuizRecord(row.state) };
   }
 
   private save(messageTs: string, record: QuizRecord): void {

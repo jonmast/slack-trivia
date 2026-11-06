@@ -1,24 +1,30 @@
 import crypto from "node:crypto";
+import { Effect, Option, Schema } from "effect";
 
-export type TriviaQuestion = {
-  category: string;
-  id: string;
-  correctAnswer: string;
-  incorrectAnswers: [string, string, string];
-  question: {
-    text: string;
-  };
-  tags: string[];
-  type: "text_choice";
-  difficulty: "easy" | "medium" | "hard";
-  regions: string[];
-  isNiche: boolean;
-};
+/** A question as The Trivia API returns it. */
+export const TriviaQuestion = Schema.Struct({
+  category: Schema.String,
+  id: Schema.String,
+  correctAnswer: Schema.String,
+  incorrectAnswers: Schema.Tuple([Schema.String, Schema.String, Schema.String]),
+  question: Schema.Struct({
+    text: Schema.String,
+  }),
+  tags: Schema.Array(Schema.String),
+  type: Schema.Literal("text_choice"),
+  difficulty: Schema.Literals(["easy", "medium", "hard"]),
+  regions: Schema.Array(Schema.String),
+  isNiche: Schema.Boolean,
+});
 
-export type Answer = {
-  id: string;
-  text: string;
-};
+export type TriviaQuestion = typeof TriviaQuestion.Type;
+
+export const Answer = Schema.Struct({
+  id: Schema.String,
+  text: Schema.String,
+});
+
+export type Answer = typeof Answer.Type;
 
 export type Response = {
   userId: string;
@@ -49,12 +55,63 @@ export type RecapQuestion = {
   speedBonus: number;
 };
 
-export class QuizCompleteError extends Error {
-  constructor() {
-    super("Quiz has reached the maximum number of questions");
-    this.name = "QuizCompleteError";
+export class QuizCompleteError extends Schema.TaggedError<QuizCompleteError>()(
+  "QuizCompleteError",
+  {},
+) {
+  override get message(): string {
+    return "Quiz has reached the maximum number of questions";
   }
 }
+
+/** The question source ran dry before the quiz asked all its questions. */
+export class QuestionsExhaustedError extends Schema.TaggedError<QuestionsExhaustedError>()(
+  "QuestionsExhaustedError",
+  {},
+) {
+  override get message(): string {
+    return "No questions available";
+  }
+}
+
+export class NoActiveQuizError extends Schema.TaggedError<NoActiveQuizError>()(
+  "NoActiveQuizError",
+  {},
+) {
+  override get message(): string {
+    return "No active quiz";
+  }
+}
+
+export class QuestionNotFoundError extends Schema.TaggedError<QuestionNotFoundError>()(
+  "QuestionNotFoundError",
+  { questionId: Schema.optionalKey(Schema.String) },
+) {
+  override get message(): string {
+    return "Question not found";
+  }
+}
+
+export class UnsupportedSnapshotVersionError extends Schema.TaggedError<UnsupportedSnapshotVersionError>()(
+  "UnsupportedSnapshotVersionError",
+  { version: Schema.Number },
+) {
+  override get message(): string {
+    return `Unsupported quiz snapshot version ${this.version}`;
+  }
+}
+
+/** A snapshot that decoded but contradicts itself, so it cannot be rebuilt. */
+export class InvalidQuizSnapshotError extends Schema.TaggedError<InvalidQuizSnapshotError>()(
+  "InvalidQuizSnapshotError",
+  { message: Schema.String },
+) {}
+
+/** `/quizzo` text that does not parse; `message` is shown to the user as is. */
+export class InvalidQuizzoArgsError extends Schema.TaggedError<InvalidQuizzoArgsError>()(
+  "InvalidQuizzoArgsError",
+  { message: Schema.String },
+) {}
 
 export type QuizState = {
   users: Set<string>;
@@ -72,43 +129,50 @@ export type Question = {
   timestamp: Date;
 };
 
-/** Anything a quiz can draw its next trivia question from. */
+/** Anything a quiz can draw its next trivia question from; none once it runs dry. */
 export type QuestionSource = {
-  get(): TriviaQuestion;
+  get(): Option.Option<TriviaQuestion>;
 };
 
 export const QUIZ_SNAPSHOT_VERSION = 2;
 
-export type ResponseSnapshot = {
-  userId: string;
-  answerId: string;
+export const ResponseSnapshot = Schema.Struct({
+  userId: Schema.String,
+  answerId: Schema.String,
   /** Epoch milliseconds; `Date` does not survive a JSON round-trip. */
-  at: number;
-};
+  at: Schema.Number,
+});
 
-export type QuestionSnapshot = {
-  question: TriviaQuestion;
-  answers: Answer[];
-  correctAnswerId: string;
+export type ResponseSnapshot = typeof ResponseSnapshot.Type;
+
+export const QuestionSnapshot = Schema.Struct({
+  question: TriviaQuestion,
+  answers: Schema.Array(Answer),
+  correctAnswerId: Schema.String,
   /** Epoch milliseconds the answer window started at. */
-  startedAt: number;
-  responses: ResponseSnapshot[];
-};
+  startedAt: Schema.Number,
+  responses: Schema.Array(ResponseSnapshot),
+});
+
+export type QuestionSnapshot = typeof QuestionSnapshot.Type;
 
 /**
  * A quiz as plain JSON: no `Date`, no `Map`, no `Set`, no class instances, so a
- * caller can store it with `JSON.stringify` and rebuild it with
- * `Quiz.fromSnapshot`.
+ * caller can store it with `JSON.stringify`, decode it with this schema and
+ * rebuild it with `Quiz.fromSnapshot`. Version 1 also stored running score
+ * totals; decoding drops them.
  */
-export type QuizSnapshot = {
-  version: number;
-  maxQuestions: number;
-  timeoutSecs: number;
-  isActive: boolean;
-  currentQuestionIndex: number | null;
-  questions: QuestionSnapshot[];
-  users: string[];
-};
+export const QuizSnapshot = Schema.Struct({
+  version: Schema.Int,
+  maxQuestions: Schema.Int,
+  timeoutSecs: Schema.Int,
+  isActive: Schema.Boolean,
+  currentQuestionIndex: Schema.NullOr(Schema.Int),
+  questions: Schema.Array(QuestionSnapshot),
+  users: Schema.Array(Schema.String),
+});
+
+export type QuizSnapshot = typeof QuizSnapshot.Type;
 
 /** How far a quiz has progressed: questions asked out of the configured total. */
 export type QuizProgress = {
@@ -130,12 +194,12 @@ export const QUIZZO_USAGE =
   "Usage: `/quizzo [num_questions] [seconds]s`\nExample: `/quizzo 5 10s`";
 
 /**
- * Parse `/quizzo [num_questions] [seconds]s` text. Returns an error string on
- * invalid input so the caller can respond ephemerally.
+ * Parse `/quizzo [num_questions] [seconds]s` text. Fails with a message the
+ * caller can respond with ephemerally.
  */
-export function parseQuizzoArgs(
+export const parseQuizzoArgs = Effect.fn("parseQuizzoArgs")(function* (
   text: string,
-): { ok: true; args: QuizzoArgs } | { ok: false; error: string } {
+): Effect.fn.Return<QuizzoArgs, InvalidQuizzoArgsError> {
   const parts = (text ?? "").trim().split(/\s+/).filter(Boolean);
   const args: QuizzoArgs = { numQuestions: 3, timeoutSecs: TIMEOUT_SECS };
 
@@ -143,10 +207,9 @@ export function parseQuizzoArgs(
     const n = Number(parts[0]);
 
     if (!Number.isInteger(n) || n < 1 || n > MAX_QUESTIONS) {
-      return {
-        ok: false,
-        error: `Invalid number of questions. Please provide a number between 1 and ${MAX_QUESTIONS}.\n${QUIZZO_USAGE}`,
-      };
+      return yield* new InvalidQuizzoArgsError({
+        message: `Invalid number of questions. Please provide a number between 1 and ${MAX_QUESTIONS}.\n${QUIZZO_USAGE}`,
+      });
     }
 
     args.numQuestions = n;
@@ -157,24 +220,22 @@ export function parseQuizzoArgs(
     const secs = match ? Number(match[1]) : NaN;
 
     if (!match) {
-      return {
-        ok: false,
-        error: `Invalid time format. Seconds must be suffixed with 's'.\n${QUIZZO_USAGE}`,
-      };
+      return yield* new InvalidQuizzoArgsError({
+        message: `Invalid time format. Seconds must be suffixed with 's'.\n${QUIZZO_USAGE}`,
+      });
     }
 
     if (secs < 1 || secs > MAX_TIMEOUT_SECS) {
-      return {
-        ok: false,
-        error: `Invalid timeout. Please provide seconds between 1 and ${MAX_TIMEOUT_SECS}.\n${QUIZZO_USAGE}`,
-      };
+      return yield* new InvalidQuizzoArgsError({
+        message: `Invalid timeout. Please provide seconds between 1 and ${MAX_TIMEOUT_SECS}.\n${QUIZZO_USAGE}`,
+      });
     }
 
     args.timeoutSecs = secs;
   }
 
-  return { ok: true, args };
-}
+  return args;
+});
 
 export function withId(text: string): Answer {
   return {
@@ -226,7 +287,9 @@ function snapshotQuestion(question: Question): QuestionSnapshot {
   };
 }
 
-function restoreQuestion(snapshot: QuestionSnapshot): Question {
+const restoreQuestion = Effect.fnUntraced(function* (
+  snapshot: QuestionSnapshot,
+): Effect.fn.Return<Question, InvalidQuizSnapshotError> {
   const answers = snapshot.answers.map((answer) => ({ ...answer }));
 
   const correctAnswer = answers.find(
@@ -234,7 +297,9 @@ function restoreQuestion(snapshot: QuestionSnapshot): Question {
   );
 
   if (!correctAnswer) {
-    throw new Error("Snapshot question has no correct answer");
+    return yield* new InvalidQuizSnapshotError({
+      message: `Snapshot question ${snapshot.question.id} has no correct answer`,
+    });
   }
 
   return {
@@ -248,7 +313,7 @@ function restoreQuestion(snapshot: QuestionSnapshot): Question {
       timestamp: new Date(response.at),
     })),
   };
-}
+});
 
 export function isCorrectAnswer(question: Question, answerId: string): boolean {
   return question.correctAnswer.id === answerId;
@@ -332,18 +397,27 @@ export class Quiz {
    * asked are not part of a snapshot: the caller supplies the question source
    * the rebuilt quiz draws the rest of its questions from.
    */
-  static fromSnapshot(snapshot: QuizSnapshot, store: QuestionSource): Quiz {
-    // Version 1 also stored running score totals, which are simply not read.
+  static readonly fromSnapshot = Effect.fn("Quiz.fromSnapshot")(function* (
+    snapshot: QuizSnapshot,
+    store: QuestionSource,
+  ): Effect.fn.Return<
+    Quiz,
+    UnsupportedSnapshotVersionError | InvalidQuizSnapshotError
+  > {
     if (snapshot.version !== QUIZ_SNAPSHOT_VERSION && snapshot.version !== 1) {
-      throw new Error(`Unsupported quiz snapshot version ${snapshot.version}`);
+      return yield* new UnsupportedSnapshotVersionError({
+        version: snapshot.version,
+      });
     }
 
     const quiz = new Quiz(store, snapshot.maxQuestions, snapshot.timeoutSecs);
-    const questions = snapshot.questions.map(restoreQuestion);
+    const questions = yield* Effect.forEach(snapshot.questions, restoreQuestion);
     const index = snapshot.currentQuestionIndex;
 
     if (index !== null && !questions[index]) {
-      throw new Error(`Quiz snapshot has no question at index ${index}`);
+      return yield* new InvalidQuizSnapshotError({
+        message: `Quiz snapshot has no question at index ${index}`,
+      });
     }
 
     const currentQuestion = index === null ? null : questions[index];
@@ -357,7 +431,7 @@ export class Quiz {
     };
 
     return quiz;
-  }
+  });
 
   addUser(userId: string): void {
     this.state.users.add(userId);
@@ -371,24 +445,33 @@ export class Quiz {
     return Array.from(this.state.users);
   }
 
-  startQuiz(): Question {
+  readonly startQuiz = Effect.fn("Quiz.startQuiz")(function* (
+    this: Quiz,
+  ): Effect.fn.Return<Question, QuizCompleteError | QuestionsExhaustedError> {
     this.state.isActive = true;
 
-    return this.nextQuestion();
-  }
+    return yield* this.nextQuestion();
+  });
 
-  nextQuestion(): Question {
-    if (this.state.questions.length >= this.state.maxQuestions) {
-      throw new QuizCompleteError();
+  readonly nextQuestion = Effect.fn("Quiz.nextQuestion")(function* (
+    this: Quiz,
+  ): Effect.fn.Return<Question, QuizCompleteError | QuestionsExhaustedError> {
+    if (this.isComplete()) {
+      return yield* new QuizCompleteError();
     }
 
     const apiQuestion = this.store.get();
-    const question = createQuestion(apiQuestion);
+
+    if (Option.isNone(apiQuestion)) {
+      return yield* new QuestionsExhaustedError();
+    }
+
+    const question = createQuestion(apiQuestion.value);
     this.state.currentQuestion = question;
     this.state.questions.push(question);
 
     return question;
-  }
+  });
 
   private speedBonus(question: Question, answeredAt: Date): number {
     const elapsed = getElapsedTime(question, answeredAt);
@@ -414,14 +497,15 @@ export class Quiz {
    * to that question (Slack may deliver a click after the question has already
    * advanced); speed bonus floors at 0, so late answers score the base point.
    */
-  submitAnswer(
+  readonly submitAnswer = Effect.fn("Quiz.submitAnswer")(function* (
+    this: Quiz,
     userId: string,
     answerId: string,
     timestamp: Date,
     questionId?: string,
-  ): boolean {
+  ): Effect.fn.Return<boolean, NoActiveQuizError | QuestionNotFoundError> {
     if (!this.state.isActive) {
-      throw new Error("No active quiz");
+      return yield* new NoActiveQuizError();
     }
 
     const question = questionId
@@ -429,7 +513,7 @@ export class Quiz {
       : this.state.currentQuestion;
 
     if (!question) {
-      throw new Error("Question not found");
+      return yield* new QuestionNotFoundError({ questionId });
     }
 
     const response: Response = { userId, answerId, timestamp };
@@ -446,7 +530,7 @@ export class Quiz {
     }
 
     return isCorrectAnswer(question, answerId);
-  }
+  });
 
   /** A user's per-question account of the quiz so far, in question order. */
   getRecap(userId: string): RecapQuestion[] {

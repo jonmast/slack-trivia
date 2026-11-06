@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest'
+import { Effect, Option, Schema } from 'effect'
 import {
   Quiz,
+  QuizCompleteError,
+  QuizSnapshot,
   SPEED_BONUS_MAX,
+  InvalidQuizSnapshotError,
+  QuestionsExhaustedError,
+  UnsupportedSnapshotVersionError,
   type Question,
   type QuestionSource,
-  type QuizSnapshot,
   type TriviaQuestion,
 } from '../src/trivia-core'
-import { createMockTriviaQuestion } from './test-utils'
+import { createMockTriviaQuestion, failureOf } from './test-utils'
 
 const TIMEOUT = 10
 
@@ -27,13 +32,7 @@ function questionSource(questions: TriviaQuestion[]): QuestionSource {
   const queue = [...questions]
 
   return {
-    get() {
-      const next = queue.shift()
-
-      if (!next) throw new Error('No questions available')
-
-      return next
-    },
+    get: () => Option.fromUndefinedOr(queue.shift()),
   }
 }
 
@@ -47,11 +46,11 @@ function quizInProgress() {
   const quiz = new Quiz(source, 3, TIMEOUT)
 
   quiz.addUser('lurker')
-  const q1 = quiz.startQuiz()
-  quiz.submitAnswer('u1', q1.correctAnswer.id, at(q1, 1500))
-  quiz.submitAnswer('u2', wrongAnswerId(q1), at(q1, 3000))
-  const q2 = quiz.nextQuestion()
-  quiz.submitAnswer('u1', q2.correctAnswer.id, at(q2, 400))
+  const q1 = Effect.runSync(quiz.startQuiz())
+  Effect.runSync(quiz.submitAnswer('u1', q1.correctAnswer.id, at(q1, 1500)))
+  Effect.runSync(quiz.submitAnswer('u2', wrongAnswerId(q1), at(q1, 3000)))
+  const q2 = Effect.runSync(quiz.nextQuestion())
+  Effect.runSync(quiz.submitAnswer('u1', q2.correctAnswer.id, at(q2, 400)))
 
   return { quiz, source, q1, q2 }
 }
@@ -64,9 +63,11 @@ function wrongAnswerId(question: Question): string {
   return question.answers.find((a) => a.id !== question.correctAnswer.id)!.id
 }
 
-/** What a durable store does with a snapshot: stringify on write, parse on wake. */
+const decodeStored = Schema.decodeUnknownSync(Schema.fromJsonString(QuizSnapshot))
+
+/** What a durable store does with a snapshot: stringify on write, decode on wake. */
 function throughStorage(snapshot: QuizSnapshot): QuizSnapshot {
-  return JSON.parse(JSON.stringify(snapshot))
+  return decodeStored(JSON.stringify(snapshot))
 }
 
 describe('Quiz snapshot', () => {
@@ -106,7 +107,7 @@ describe('Quiz snapshot', () => {
 
   it('rehydrates into an equivalent quiz', () => {
     const { quiz, source, q1 } = quizInProgress()
-    const rehydrated = Quiz.fromSnapshot(throughStorage(quiz.toSnapshot()), source)
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(throughStorage(quiz.toSnapshot()), source))
 
     expect(rehydrated.isActive()).toBe(true)
     expect(rehydrated.isComplete()).toBe(false)
@@ -133,18 +134,18 @@ describe('Quiz snapshot', () => {
 
   it('scores a late answer, a changed answer and a fast answer exactly as the original does', () => {
     const { quiz, source } = quizInProgress()
-    const rehydrated = Quiz.fromSnapshot(throughStorage(quiz.toSnapshot()), source)
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(throughStorage(quiz.toSnapshot()), source))
 
     for (const instance of [quiz, rehydrated]) {
       const q1 = instance.getQuestions()[0]
       const q2 = instance.getCurrentQuestion()!
 
       // Late: past the answer window, so the base point and no bonus.
-      instance.submitAnswer('u3', q1.correctAnswer.id, at(q1, 25_000), q1.question.id)
+      Effect.runSync(instance.submitAnswer('u3', q1.correctAnswer.id, at(q1, 25_000), q1.question.id))
       // Changed: the bonus u1 earned on q2 before the snapshot no longer counts.
-      instance.submitAnswer('u1', wrongAnswerId(q2), at(q2, 2000))
+      Effect.runSync(instance.submitAnswer('u1', wrongAnswerId(q2), at(q2, 2000)))
       // Fast: answered almost immediately, so nearly the whole bonus.
-      instance.submitAnswer('u2', q2.correctAnswer.id, at(q2, 100))
+      Effect.runSync(instance.submitAnswer('u2', q2.correctAnswer.id, at(q2, 100)))
     }
 
     expect(rehydrated.getUserScore('u1')).toEqual(quiz.getUserScore('u1'))
@@ -180,7 +181,7 @@ describe('Quiz snapshot', () => {
       })),
     }
 
-    const rehydrated = Quiz.fromSnapshot(v1, source)
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(decodeStored(JSON.stringify(v1)), source))
 
     for (const userId of ['lurker', 'u1', 'u2']) {
       const expected = quiz.getUserScore(userId)!
@@ -197,23 +198,23 @@ describe('Quiz snapshot', () => {
     const { quiz } = quizInProgress()
     const [, , thirdQuestion] = triviaQuestions(3)
 
-    const live = Quiz.fromSnapshot(
-      throughStorage(quiz.toSnapshot()),
-      questionSource([thirdQuestion]),
+    const live = Effect.runSync(
+      Quiz.fromSnapshot(throughStorage(quiz.toSnapshot()), questionSource([thirdQuestion])),
     )
 
-    const q3 = live.nextQuestion()
+    const q3 = Effect.runSync(live.nextQuestion())
     expect(live.getQuestions().map((q) => q.question.id)).toEqual(['q1', 'q2', 'q3'])
-    live.submitAnswer('u1', q3.correctAnswer.id, at(q3, 1000))
+    Effect.runSync(live.submitAnswer('u1', q3.correctAnswer.id, at(q3, 1000)))
 
-    const woken = Quiz.fromSnapshot(throughStorage(live.toSnapshot()), questionSource([]))
+    const woken = Effect.runSync(Quiz.fromSnapshot(throughStorage(live.toSnapshot()), questionSource([])))
     expect(woken.isComplete()).toBe(true)
+    expect(failureOf(woken.nextQuestion())).toBeInstanceOf(QuizCompleteError)
     expect(woken.getProgress()).toEqual({ current: 3, total: 3 })
     expect(woken.getRecap('u1')).toEqual(live.getRecap('u1'))
     expect(woken.getLeaderboard()).toEqual(live.getLeaderboard())
 
     woken.endQuiz()
-    const ended = Quiz.fromSnapshot(throughStorage(woken.toSnapshot()), questionSource([]))
+    const ended = Effect.runSync(Quiz.fromSnapshot(throughStorage(woken.toSnapshot()), questionSource([])))
     expect(ended.isActive()).toBe(false)
     expect(ended.getLeaderboard()).toEqual(woken.getLeaderboard())
   })
@@ -226,30 +227,30 @@ describe('Quiz snapshot', () => {
     expect(snapshot.questions).toEqual([])
     expect(snapshot.currentQuestionIndex).toBe(null)
 
-    const rehydrated = Quiz.fromSnapshot(snapshot, source)
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(snapshot, source))
     expect(rehydrated.isActive()).toBe(false)
     expect(rehydrated.getCurrentQuestion()).toBe(null)
 
-    const q1 = rehydrated.startQuiz()
+    const q1 = Effect.runSync(rehydrated.startQuiz())
     expect(rehydrated.isActive()).toBe(true)
-    expect(rehydrated.submitAnswer('u1', q1.correctAnswer.id, at(q1, 1000))).toBe(true)
+    expect(Effect.runSync(rehydrated.submitAnswer('u1', q1.correctAnswer.id, at(q1, 1000)))).toBe(true)
   })
 
   it('shares no mutable state with the snapshot in either direction', () => {
     const { quiz, source } = quizInProgress()
     const snapshot = quiz.toSnapshot()
-    const rehydrated = Quiz.fromSnapshot(snapshot, source)
+    const rehydrated = Effect.runSync(Quiz.fromSnapshot(snapshot, source))
     const asWritten = throughStorage(snapshot)
 
     const q2 = quiz.getCurrentQuestion()!
-    quiz.submitAnswer('u1', wrongAnswerId(q2), at(q2, 5000))
-    quiz.submitAnswer('u4', q2.correctAnswer.id, at(q2, 1000))
+    Effect.runSync(quiz.submitAnswer('u1', wrongAnswerId(q2), at(q2, 5000)))
+    Effect.runSync(quiz.submitAnswer('u4', q2.correctAnswer.id, at(q2, 1000)))
     expect(snapshot).toStrictEqual(asWritten)
 
     const restoredQ1 = rehydrated.getQuestions()[0]
-    rehydrated.submitAnswer('u9', restoredQ1.correctAnswer.id, at(restoredQ1, 1000), 'q1')
+    Effect.runSync(rehydrated.submitAnswer('u9', restoredQ1.correctAnswer.id, at(restoredQ1, 1000), 'q1'))
     // Changing an answer replaces it in place, so a leaked response would be rewritten after storage.
-    rehydrated.submitAnswer('u1', wrongAnswerId(restoredQ1), at(restoredQ1, 5000), 'q1')
+    Effect.runSync(rehydrated.submitAnswer('u1', wrongAnswerId(restoredQ1), at(restoredQ1, 5000), 'q1'))
     expect(snapshot).toStrictEqual(asWritten)
     expect(quiz.getUserScore('u9')).toBeUndefined()
     expect(rehydrated.getUserScore('u4')).toBeUndefined()
@@ -257,13 +258,38 @@ describe('Quiz snapshot', () => {
 
   it('refuses a snapshot it cannot faithfully rebuild', () => {
     const { quiz, source } = quizInProgress()
+    const stored = throughStorage(quiz.toSnapshot())
 
-    const future = throughStorage(quiz.toSnapshot())
-    future.version = future.version + 1
-    expect(() => Quiz.fromSnapshot(future, source)).toThrow(/Unsupported quiz snapshot version/)
+    const future = { ...stored, version: stored.version + 1 }
+    const unsupported = failureOf(Quiz.fromSnapshot(future, source))
+    expect(unsupported).toBeInstanceOf(UnsupportedSnapshotVersionError)
+    expect(unsupported).toMatchObject({ version: stored.version + 1 })
+    expect(unsupported.message).toMatch(/Unsupported quiz snapshot version/)
 
-    const danglingCurrent = throughStorage(quiz.toSnapshot())
-    danglingCurrent.currentQuestionIndex = 7
-    expect(() => Quiz.fromSnapshot(danglingCurrent, source)).toThrow(/no question at index 7/)
+    const danglingCurrent = { ...stored, currentQuestionIndex: 7 }
+    const dangling = failureOf(Quiz.fromSnapshot(danglingCurrent, source))
+    expect(dangling).toBeInstanceOf(InvalidQuizSnapshotError)
+    expect(dangling.message).toMatch(/no question at index 7/)
+
+    const [q1, ...rest] = stored.questions
+    const noCorrectAnswer = { ...stored, questions: [{ ...q1, correctAnswerId: 'nowhere' }, ...rest] }
+    expect(failureOf(Quiz.fromSnapshot(noCorrectAnswer, source))).toBeInstanceOf(InvalidQuizSnapshotError)
+  })
+
+  it('refuses to decode a stored snapshot that does not match the schema', () => {
+    const { quiz } = quizInProgress()
+    const stored = JSON.parse(JSON.stringify(quiz.toSnapshot()))
+
+    delete stored.questions[0].responses[0].at
+    expect(() => decodeStored(JSON.stringify(stored))).toThrow(Schema.SchemaError)
+    expect(() => decodeStored('not json')).toThrow(Schema.SchemaError)
+  })
+
+  it('fails with a typed error when the question source runs dry', () => {
+    const quiz = new Quiz(questionSource(triviaQuestions(1)), 2, TIMEOUT)
+    Effect.runSync(quiz.startQuiz())
+
+    expect(failureOf(quiz.nextQuestion())).toBeInstanceOf(QuestionsExhaustedError)
+    expect(quiz.getProgress()).toEqual({ current: 1, total: 2 })
   })
 })

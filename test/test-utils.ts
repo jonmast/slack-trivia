@@ -5,6 +5,7 @@ import type {
   RadioButtons,
   SectionBlock,
 } from 'slack-cloudflare-workers'
+import { Effect, Option } from 'effect'
 import type { QuestionSource, TriviaQuestion } from '../src/trivia-core'
 
 export const createMockTriviaQuestion = (overrides: Partial<TriviaQuestion> = {}): TriviaQuestion => ({
@@ -35,8 +36,13 @@ export const createQuestionSource = (questions: TriviaQuestion[] = createMockQue
   const queue = [...questions]
 
   return {
-    get: () => queue.shift() ?? createMockTriviaQuestion(),
+    get: () => Option.some(queue.shift() ?? createMockTriviaQuestion()),
   }
+}
+
+/** The typed error an effect fails with; a success or a defect fails the test. */
+export function failureOf<A, E>(effect: Effect.Effect<A, E>): E {
+  return Effect.runSync(Effect.flip(effect))
 }
 
 type SlackBlock = AnyMessageBlock | AnyModalBlock

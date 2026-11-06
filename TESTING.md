@@ -19,7 +19,7 @@ pnpm test
 ## Projects
 
 - **node** (`test/*.test.ts`) — the pure modules shared by the Worker and the build script, in a plain Node environment:
-  - `trivia-core.test.ts` — answers, shuffling, question construction and question timing helpers.
+  - `trivia-core.test.ts` — answers, shuffling, question construction, question timing helpers and the Trivia API question schema.
   - `quiz-rules.test.ts` — `/quizzo` argument parsing and the `Quiz` answer/scoring rules.
   - `multiplayer.test.ts` — several participants scoring in one quiz.
   - `quiz-snapshot.test.ts` — `Quiz` snapshot round-trips, the format the Durable Object stores.
