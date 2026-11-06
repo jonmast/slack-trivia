@@ -24,6 +24,7 @@ describe('parseQuizzoArgs', () => {
     for (const text of ['0', '21', 'abc', '2.5', `${MAX_QUESTIONS + 1}`]) {
       const r = parseQuizzoArgs(text)
       expect(r.ok, text).toBe(false)
+
       if (!r.ok) expect(r.error).toContain('Invalid number of questions')
     }
   })
@@ -31,11 +32,13 @@ describe('parseQuizzoArgs', () => {
   it('rejects bad timeouts', () => {
     const noSuffix = parseQuizzoArgs('3 10')
     expect(noSuffix.ok).toBe(false)
+
     if (!noSuffix.ok) expect(noSuffix.error).toContain("suffixed with 's'")
 
     for (const text of ['3 0s', `3 ${MAX_TIMEOUT_SECS + 1}s`]) {
       const r = parseQuizzoArgs(text)
       expect(r.ok, text).toBe(false)
+
       if (!r.ok) expect(r.error).toContain('Invalid timeout')
     }
   })
@@ -107,11 +110,14 @@ describe('Leaderboard ranking', () => {
   /** Asks one question per round; each participant answers `[correct?, msIntoWindow]`. */
   function play(quiz: Quiz, answers: Record<string, [boolean, number][]>) {
     const rounds = Math.max(...Object.values(answers).map((a) => a.length))
+
     for (let i = 0; i < rounds; i++) {
       const q = i === 0 ? quiz.startQuiz() : quiz.nextQuestion()
       const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
+
       for (const [userId, picks] of Object.entries(answers)) {
         const pick = picks[i]
+
         if (!pick) continue
         const [correct, ms] = pick
         quiz.submitAnswer(userId, correct ? q.correctAnswer.id : wrong, new Date(q.timestamp.getTime() + ms))

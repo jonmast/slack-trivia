@@ -8,6 +8,7 @@ import { renderCountdownGif, COUNTDOWN_LEAD_SECS } from "../src/countdown";
 import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/trivia-core";
 
 const outDir = join(__dirname, "..", "public", "countdown");
+
 mkdirSync(outDir, { recursive: true });
 
 for (const file of readdirSync(outDir)) {
@@ -15,10 +16,13 @@ for (const file of readdirSync(outDir)) {
 }
 
 const durations = new Set<number>();
+
 for (let secs = 1; secs <= MAX_TIMEOUT_SECS; secs++) durations.add(secs);
+
 durations.add(RESULTS_SECS);
 
 let totalBytes = 0;
+
 for (const secs of [...durations].sort((a, b) => a - b)) {
   const bytes = renderCountdownGif(secs, COUNTDOWN_LEAD_SECS);
   writeFileSync(join(outDir, `${secs}.gif`), bytes);

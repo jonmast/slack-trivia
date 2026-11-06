@@ -46,6 +46,7 @@ function interceptTrivia(count: number) {
     regions: ['US'],
     isNiche: false,
   }))
+
   fetchMock
     .get('https://the-trivia-api.com')
     .intercept({ path: /^\/v2\/questions/, method: 'GET' })
@@ -70,8 +71,10 @@ function interceptResponseUrl(): () => Reply | undefined {
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
       replied = JSON.parse(options.body as string)
+
       return 'ok'
     })
+
   return () => replied
 }
 
@@ -94,11 +97,13 @@ describe('Slack request handling', () => {
 
   it('rejects an unsigned request', async () => {
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s'), false),
       env,
       ctx,
     )
+
     await waitOnExecutionContext(ctx)
 
     expect(response.status).toBe(401)
@@ -123,6 +128,7 @@ describe('Slack request handling', () => {
     // No response_url interceptor—on success the Worker sends no ephemeral.
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s')),
       env,
@@ -140,11 +146,13 @@ describe('Slack request handling', () => {
     const replied = interceptResponseUrl()
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('999 10s')),
       env,
       ctx,
     )
+
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
     // The lazy listener fires after the ack via ctx.waitUntil(); give it time

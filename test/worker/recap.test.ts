@@ -50,6 +50,7 @@ function recapButtonValue(blocks: any[]): string | undefined {
 /** The option the participant should click to be right. */
 function correctOption(postedBlocks: any[]): string {
   const options = postedBlocks[1].accessory.options
+
   return options.find((option: any) => option.text.text.startsWith('Correct')).value
 }
 
@@ -77,6 +78,7 @@ async function playQuiz(label: string): Promise<string> {
   const summary = slack.calls[before + 2]
   const messageTs = recapButtonValue(summary.blocks)
   expect(messageTs).toBeTruthy()
+
   return messageTs!
 }
 
@@ -129,6 +131,7 @@ function interceptClicks(): void {
         trigger_id: form.get('trigger_id') ?? undefined,
         view: JSON.parse(form.get('view') ?? 'null'),
       }
+
       return { ok: true }
     })
     .persist()
@@ -137,6 +140,7 @@ function interceptClicks(): void {
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
       replied = JSON.parse(options.body as string)
+
       return 'ok'
     })
     .persist()
@@ -147,13 +151,16 @@ async function clickRecap(userId: string, messageTs: string) {
   opened = undefined
   replied = undefined
   const ctx = createExecutionContext()
+
   const response = await worker.fetch(
     await slackRequest(SLACK_EVENTS_PATH, actionBody(userId, messageTs)),
     env,
     ctx,
   )
+
   expect(response.status).toBe(200)
   await waitOnExecutionContext(ctx)
+
   return { modal: () => opened, ephemeral: () => replied }
 }
 

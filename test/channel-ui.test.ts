@@ -89,6 +89,7 @@ expect(blocks[2].type).toBe('section')
           { userId: 'U3', answerId: 'id-3', timestamp: new Date() },
         ],
       }
+
       const text = (renderChannelResults(answered, mockLeaderboard, 2, 3, 8, GIF_URL)[1] as any).text.text
       expect(text).toContain('✅ *Correct Answer* — 2')
       expect(text).toContain('◻️ Wrong1 — 0')
@@ -116,8 +117,10 @@ expect(blocks[2].type).toBe('section')
         ...renderChannelQuestion(mockQuestion, 30, 2, 10, GIF_URL),
         ...renderChannelResults(mockQuestion, mockLeaderboard, 2, 3, 8, GIF_URL),
       ]
+
       for (const block of all as any[]) {
         if (block.text) expect(block.text.text.trim().length).toBeGreaterThan(0)
+
         for (const el of block.elements ?? []) {
           if (el.type === 'image') expect(el.alt_text.trim().length).toBeGreaterThan(0)
           else expect(el.text.trim().length).toBeGreaterThan(0)

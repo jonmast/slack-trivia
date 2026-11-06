@@ -26,6 +26,7 @@ export const createMockQuestions = (count: number = 2): TriviaQuestion[] =>
 /** A QuestionSource serving the given questions in order, refilling with fresh ones if exhausted. */
 export const createQuestionSource = (questions: TriviaQuestion[] = createMockQuestions()): QuestionSource => {
   const queue = [...questions]
+
   return {
     get: () => queue.shift() ?? createMockTriviaQuestion(),
   }

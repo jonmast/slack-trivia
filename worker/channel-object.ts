@@ -60,7 +60,9 @@ function questionSource(queue: TriviaQuestion[]): QuestionSource {
   return {
     get(): TriviaQuestion {
       const next = queue.shift();
+
       if (!next) throw new Error("No questions available");
+
       return next;
     },
   };
@@ -135,9 +137,11 @@ export class ChannelObject extends DurableObject<Env> {
 
     // 1. Parse arguments.
     const parsed = parseQuizzoArgs(text);
+
     if (!parsed.ok) {
       return { ok: false, text: parsed.error };
     }
+
     const { numQuestions, timeoutSecs } = parsed.args;
 
     // 2. Reject if a quiz is already running in this channel.
@@ -150,12 +154,15 @@ export class ChannelObject extends DurableObject<Env> {
 
     // 3. Fetch exactly the requested number of questions in one API request.
     let triviaQuestions: TriviaQuestion[];
+
     try {
       const url = `${TRIVIA_API_URL}?limit=${numQuestions}`;
       const response = await fetch(url);
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
+
       const data = await response.json();
       triviaQuestions = Array.isArray(data) ? data : [];
     } catch {
@@ -181,6 +188,7 @@ export class ChannelObject extends DurableObject<Env> {
 
     // Render blocks using the existing channel question renderer.
     const gifUrl = countdownGifUrl(origin, timeoutSecs, question.question.id);
+
     const blocks = renderChannelQuestion(
       question,
       timeoutSecs,
@@ -190,6 +198,7 @@ export class ChannelObject extends DurableObject<Env> {
     );
 
     let postResult: { ok: boolean; ts?: string };
+
     try {
       const response = await fetch("https://slack.com/api/chat.postMessage", {
         method: "POST",
@@ -204,6 +213,7 @@ export class ChannelObject extends DurableObject<Env> {
           text: `Question 1/${numQuestions}: ${question.question.question.text}`,
         }),
       });
+
       postResult = await response.json<{ ok: boolean; ts?: string }>();
     } catch {
       return {
@@ -230,6 +240,7 @@ export class ChannelObject extends DurableObject<Env> {
     //    so the speed bonus and GIF sync with Slack's render time.
     const snapshot = quiz.toSnapshot();
     snapshot.questions[0].startedAt = Date.now();
+
     const record: QuizRecord = {
       ...snapshot,
       phase: "question",
@@ -270,19 +281,23 @@ export class ChannelObject extends DurableObject<Env> {
     answeredAt: number,
   ): void {
     const running = this.loadRunningQuiz();
+
     if (!running) {
       console.log(
         `Answer from ${userId} for question ${questionId} but no running quiz; ignoring`,
       );
+
       return;
     }
 
     const { messageTs, record } = running;
     const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+
     try {
       quiz.submitAnswer(userId, answerId, new Date(answeredAt), questionId);
     } catch (error) {
       console.error(`Failed to record answer from ${userId}:`, error);
+
       return;
     }
 
@@ -307,10 +322,12 @@ export class ChannelObject extends DurableObject<Env> {
         messageTs,
       )
       .toArray()[0];
+
     if (!row) return null;
 
     const record: QuizRecord = JSON.parse(row.state);
     const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
+
     if (!quiz.getUserScore(userId)) return null;
 
     return quiz.getRecap(userId);
@@ -334,12 +351,14 @@ export class ChannelObject extends DurableObject<Env> {
    */
   async alarm(): Promise<void> {
     const running = this.loadRunningQuiz();
+
     if (!running) return;
 
     const { messageTs, record } = running;
 
     if (Date.now() < record.deadline) {
       await this.ctx.storage.setAlarm(record.deadline);
+
       return;
     }
 
@@ -355,6 +374,7 @@ export class ChannelObject extends DurableObject<Env> {
         // platform retries the alarm rather than killing a live quiz.
         throw error;
       }
+
       // A message that can no longer be updated, or a question source that ran
       // dry, ends the quiz rather than leaving the channel in a half state.
       console.error("Quiz failed to advance; ending quiz:", error);
@@ -369,17 +389,20 @@ export class ChannelObject extends DurableObject<Env> {
   ): Promise<void> {
     const quiz = Quiz.fromSnapshot(record, questionSource([...record.pending]));
     const question = quiz.getCurrentQuestion();
+
     if (!question) {
       throw new QuizFailedError("Running quiz has no current question");
     }
 
     const resultsSecs = this.resultsSecs();
     const { current, total } = quiz.getProgress();
+
     const gifUrl = countdownGifUrl(
       record.origin,
       resultsSecs,
       `${question.question.id}-results`,
     );
+
     await this.updateChannelMessage(
       messageTs,
       renderChannelResults(
@@ -407,23 +430,28 @@ export class ChannelObject extends DurableObject<Env> {
     const quiz = Quiz.fromSnapshot(record, questionSource(pending));
 
     let question: Question;
+
     try {
       question = quiz.nextQuestion();
     } catch (error) {
       if (error instanceof QuizCompleteError) {
         await this.complete(messageTs, record);
+
         return;
       }
+
       // The stored questions ran out: retrying will not conjure more.
       throw new QuizFailedError(String(error));
     }
 
     const { current, total } = quiz.getProgress();
+
     const gifUrl = countdownGifUrl(
       record.origin,
       record.timeoutSecs,
       question.question.id,
     );
+
     await this.updateChannelMessage(
       messageTs,
       renderChannelQuestion(
@@ -495,6 +523,7 @@ export class ChannelObject extends DurableObject<Env> {
     text: string,
   ): Promise<void> {
     const channelId = this.getChannelId();
+
     if (!channelId) {
       throw new QuizFailedError("Channel object does not know its channel");
     }
@@ -510,10 +539,13 @@ export class ChannelObject extends DurableObject<Env> {
       },
       body: JSON.stringify({ channel: channelId, ts: messageTs, blocks, text }),
     });
+
     if (!response.ok) {
       throw new Error(`chat.update HTTP ${response.status}`);
     }
+
     const result = await response.json<{ ok: boolean; error?: string }>();
+
     if (!result.ok) {
       throw new QuizFailedError(
         `chat.update failed: ${result.error ?? "unknown"}`,
@@ -528,10 +560,12 @@ export class ChannelObject extends DurableObject<Env> {
    */
   private resultsSecs(): number {
     const configured = Number(this.env.RESULTS_SECS);
+
     const valid =
       Number.isInteger(configured) &&
       configured >= 1 &&
       configured <= MAX_TIMEOUT_SECS;
+
     return valid ? configured : RESULTS_SECS;
   }
 
@@ -544,7 +578,9 @@ export class ChannelObject extends DurableObject<Env> {
         "SELECT message_ts, state FROM quizzes WHERE status = 'running'",
       )
       .toArray()[0];
+
     if (!row) return null;
+
     return { messageTs: row.message_ts, record: JSON.parse(row.state) };
   }
 
@@ -563,6 +599,7 @@ export class ChannelObject extends DurableObject<Env> {
         "SELECT COUNT(*) AS cnt FROM quizzes WHERE status = 'running'",
       )
       .one();
+
     return row.cnt > 0;
   }
 
@@ -573,6 +610,7 @@ export class ChannelObject extends DurableObject<Env> {
         "SELECT channel_id FROM channel WHERE id = 1",
       )
       .toArray()[0];
+
     return row?.channel_id ?? null;
   }
 

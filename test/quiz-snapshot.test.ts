@@ -25,10 +25,13 @@ function triviaQuestions(count: number): TriviaQuestion[] {
 /** Hands out prepared questions in order, so no test depends on the trivia API. */
 function questionSource(questions: TriviaQuestion[]): QuestionSource {
   const queue = [...questions]
+
   return {
     get() {
       const next = queue.shift()
+
       if (!next) throw new Error('No questions available')
+
       return next
     },
   }
@@ -68,15 +71,21 @@ function throughStorage(snapshot: QuizSnapshot): QuizSnapshot {
 
 function assertPlainJson(value: unknown, path = 'snapshot'): void {
   if (value === null) return
+
   if (Array.isArray(value)) {
     value.forEach((item, i) => assertPlainJson(item, `${path}[${i}]`))
+
     return
   }
+
   if (typeof value === 'object') {
     expect(Object.getPrototypeOf(value), `${path} is not a plain object`).toBe(Object.prototype)
+
     for (const [key, child] of Object.entries(value)) assertPlainJson(child, `${path}.${key}`)
+
     return
   }
+
   expect(['string', 'number', 'boolean'], `${path} is ${typeof value}`).toContain(typeof value)
 }
 
@@ -179,6 +188,7 @@ describe('Quiz snapshot', () => {
 
   it('splits the speed bonus out of the points of a version 1 snapshot', () => {
     const { quiz, source } = quizInProgress()
+
     // Version 1 also stored one combined score per participant.
     const v1 = {
       ...throughStorage(quiz.toSnapshot()),
@@ -198,12 +208,14 @@ describe('Quiz snapshot', () => {
       expect(actual.speedBonus).toBeCloseTo(expected.speedBonus, 10)
       expect(actual.totalAnswered).toBe(expected.totalAnswered)
     }
+
     expect(rehydrated.toSnapshot().version).toBe(2)
   })
 
   it('draws its remaining questions from the source it is rebuilt with', () => {
     const { quiz } = quizInProgress()
     const [, , thirdQuestion] = triviaQuestions(3)
+
     const live = Quiz.fromSnapshot(
       throughStorage(quiz.toSnapshot()),
       questionSource([thirdQuestion]),

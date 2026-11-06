@@ -114,6 +114,7 @@ export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
 export const MAX_TIMEOUT_SECS = 60;
+
 /** How long the per-question results screen stays up before the next question. */
 export const RESULTS_SECS = 5;
 
@@ -134,30 +135,35 @@ export function parseQuizzoArgs(
 
   if (parts.length > 0) {
     const n = Number(parts[0]);
+
     if (!Number.isInteger(n) || n < 1 || n > MAX_QUESTIONS) {
       return {
         ok: false,
         error: `Invalid number of questions. Please provide a number between 1 and ${MAX_QUESTIONS}.\n${QUIZZO_USAGE}`,
       };
     }
+
     args.numQuestions = n;
   }
 
   if (parts.length > 1) {
     const match = /^(\d+)s$/.exec(parts[1]);
     const secs = match ? Number(match[1]) : NaN;
+
     if (!match) {
       return {
         ok: false,
         error: `Invalid time format. Seconds must be suffixed with 's'.\n${QUIZZO_USAGE}`,
       };
     }
+
     if (secs < 1 || secs > MAX_TIMEOUT_SECS) {
       return {
         ok: false,
         error: `Invalid timeout. Please provide seconds between 1 and ${MAX_TIMEOUT_SECS}.\n${QUIZZO_USAGE}`,
       };
     }
+
     args.timeoutSecs = secs;
   }
 
@@ -177,10 +183,12 @@ export function shuffleAnswers(
 ): Answer[] {
   // Fisher-Yates: uniform shuffle (sort with a random comparator is biased).
   const answers = [correctAnswer, ...incorrectAnswers];
+
   for (let i = answers.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [answers[i], answers[j]] = [answers[j], answers[i]];
   }
+
   return answers;
 }
 
@@ -214,9 +222,11 @@ function snapshotQuestion(question: Question): QuestionSnapshot {
 
 function restoreQuestion(snapshot: QuestionSnapshot): Question {
   const answers = snapshot.answers.map((answer) => ({ ...answer }));
+
   const correctAnswer = answers.find(
     (answer) => answer.id === snapshot.correctAnswerId,
   );
+
   if (!correctAnswer) {
     throw new Error("Snapshot question has no correct answer");
   }
@@ -252,6 +262,7 @@ export function getRemainingTime(
   timeoutSeconds: number = TIMEOUT_SECS,
 ): number {
   const elapsed = (Number(new Date()) - Number(question.timestamp)) / 1000;
+
   return Math.max(0, timeoutSeconds - elapsed);
 }
 
@@ -267,6 +278,7 @@ export function getElapsedTime(
   fromTimestamp?: Date,
 ): number {
   const referenceTime = fromTimestamp || new Date();
+
   return (Number(referenceTime) - Number(question.timestamp)) / 1000;
 }
 
@@ -323,9 +335,11 @@ export class Quiz {
     const quiz = new Quiz(store, snapshot.maxQuestions, snapshot.timeoutSecs);
     const questions = snapshot.questions.map(restoreQuestion);
     const index = snapshot.currentQuestionIndex;
+
     if (index !== null && !questions[index]) {
       throw new Error(`Quiz snapshot has no question at index ${index}`);
     }
+
     const currentQuestion = index === null ? null : questions[index];
 
     quiz.state = {
@@ -353,6 +367,7 @@ export class Quiz {
 
   startQuiz(): Question {
     this.state.isActive = true;
+
     return this.nextQuestion();
   }
 
@@ -371,6 +386,7 @@ export class Quiz {
 
   private speedBonus(question: Question, answeredAt: Date): number {
     const elapsed = getElapsedTime(question, answeredAt);
+
     return Math.max(
       0,
       ((this.timeoutSecs - elapsed) / this.timeoutSecs) * SPEED_BONUS_MAX,
@@ -411,6 +427,7 @@ export class Quiz {
     }
 
     const response: Response = { userId, answerId, timestamp };
+
     const existingIndex = question.responses.findIndex(
       (r) => r.userId === userId,
     );
@@ -430,6 +447,7 @@ export class Quiz {
     return this.state.questions.map((question) => {
       const response = question.responses.find((r) => r.userId === userId);
       const earned = response ? this.earned(question, response) : NOTHING_EARNED;
+
       return {
         text: question.question.question.text,
         options: question.answers.map((answer) => ({
@@ -458,18 +476,22 @@ export class Quiz {
    */
   getUserScores(): UserScore[] {
     const scores = new Map<string, UserScore>();
+
     const scoreFor = (userId: string): UserScore => {
       let score = scores.get(userId);
+
       if (!score) {
         score = { userId, score: 0, speedBonus: 0, totalAnswered: 0 };
         scores.set(userId, score);
       }
+
       return score;
     };
 
     for (const userId of this.state.users) {
       scoreFor(userId);
     }
+
     for (const question of this.state.questions) {
       for (const response of question.responses) {
         const score = scoreFor(response.userId);

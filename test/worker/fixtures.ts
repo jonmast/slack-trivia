@@ -77,6 +77,7 @@ export class SlackRecorder {
         this.calls.push({ method: 'chat.postMessage', ...body })
         // Slack never reuses a timestamp; the first post gets POST_MESSAGE_TS.
         this.posted += 1
+
         return { ok: true, ts: this.posted === 1 ? POST_MESSAGE_TS : `1234567890.000${this.posted}` }
       })
       .persist()
@@ -90,10 +91,13 @@ export class SlackRecorder {
         this.calls.push(call)
 
         const status = this.failHttp(call)
+
         if (status) {
           return { statusCode: status, data: 'rate limited' }
         }
+
         const error = this.failUpdate(call)
+
         return { statusCode: 200, data: error ? { ok: false, error } : { ok: true } }
       })
       .persist()
@@ -117,6 +121,7 @@ export async function waitForCalls(
   timeoutMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
+
   while (recorder.calls.length < count) {
     if (Date.now() > deadline) {
       throw new Error(
@@ -124,6 +129,7 @@ export async function waitForCalls(
           recorder.calls.map((call) => call.text).join(' | '),
       )
     }
+
     await sleep(25)
   }
 }
@@ -137,14 +143,17 @@ export async function signSlackBody(body: string, timestamp: string): Promise<st
     false,
     ['sign'],
   )
+
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
     new TextEncoder().encode(`v0:${timestamp}:${body}`),
   )
+
   const hex = [...new Uint8Array(signature)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+
   return `v0=${hex}`
 }
 
@@ -155,13 +164,16 @@ export async function slackRequest(
   signed = true,
 ): Promise<Request> {
   const timestamp = Math.floor(Date.now() / 1000).toString()
+
   const headers: Record<string, string> = {
     'content-type': 'application/x-www-form-urlencoded',
   }
+
   if (signed) {
     headers['x-slack-request-timestamp'] = timestamp
     headers['x-slack-signature'] = await signSlackBody(body, timestamp)
   }
+
   return new Request(`${COUNTDOWN_ORIGIN}${path}`, { method: 'POST', headers, body })
 }
 

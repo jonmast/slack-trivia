@@ -16,8 +16,10 @@ function interceptPostMessage(ts = POST_MESSAGE_TS) {
     .intercept({ path: '/api/chat.postMessage', method: 'POST' })
     .reply(200, (opts) => {
       body = JSON.parse(opts.body as string)
+
       return { ok: true, ts }
     })
+
   return () => body
 }
 

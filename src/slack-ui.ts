@@ -15,6 +15,7 @@ export function optionLabel(text: string): string {
   if (text.length <= OPTION_TEXT_MAX) {
     return text
   }
+
   return `${text.substring(0, OPTION_TEXT_MAX - 1).trimEnd()}…`
 }
 
@@ -69,12 +70,14 @@ export function renderChannelQuestion(
       { type: "mrkdwn", text: `⏱ ${timeoutSecs} seconds` },
     ],
   };
+
   return [headerBlock, questionBlock, countdownBlock];
 }
 
 /** How everyone answered, without naming anyone: per-option counts plus a tally. */
 export function renderAnswerBreakdown(question: Question): string {
   const counts = new Map<string, number>()
+
   for (const r of question.responses) counts.set(r.answerId, (counts.get(r.answerId) ?? 0) + 1)
   const answered = question.responses.length
   const correct = counts.get(question.correctAnswer.id) ?? 0
@@ -82,6 +85,7 @@ export function renderAnswerBreakdown(question: Question): string {
   const rows = question.answers.map((a) => {
     const isCorrect = a.id === question.correctAnswer.id
     const n = counts.get(a.id) ?? 0
+
     return `${isCorrect ? "✅" : "◻️"} ${isCorrect ? `*${a.text}*` : a.text} — ${n}`
   })
 
@@ -106,6 +110,7 @@ export function renderChannelResults(
   countdownGifUrl: string,
 ): AnyMessageBlock[] {
   const sortedScores = userScores.sort(compareRank)
+
   const leaderboard = sortedScores
     .map(
       (user, index) => `${index + 1}. <@${user.userId}>: ${plural(user.score, "point", "points")}`,
@@ -151,6 +156,7 @@ export function renderChannelResults(
 
 export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): AnyMessageBlock[] {
   const sortedScores = userScores.sort(compareRank)
+
   const leaderboard = sortedScores
     .map(
       (user, index) =>
@@ -199,12 +205,14 @@ export function renderFinalSummary(userScores: UserScore[], totalQuestions: numb
 
 function recapMarker(option: RecapOption): string {
   if (option.selected) return option.correct ? "✅" : "❌"
+
   return option.correct ? "💡" : "•"
 }
 
 function recapPoints(entry: RecapQuestion): string {
   if (!entry.answered) return "(no answer)"
   const points = plural(entry.points, "pt", "pts")
+
   return entry.points > 0 ? `${points} · ${speedBonus(entry.speedBonus)}` : points
 }
 

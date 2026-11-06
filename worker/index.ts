@@ -13,6 +13,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<Response> {
     const origin = new URL(request.url).origin;
+
     const app = new SlackApp({
       env,
       routes: { events: SLACK_EVENTS_PATH },
@@ -22,9 +23,11 @@ export default {
       async () => "",
       async ({ context, payload }) => {
         const channelId = payload.channel_id;
+
         const channel = env.CHANNEL_OBJECT.get(
           env.CHANNEL_OBJECT.idFromName(channelId),
         );
+
         try {
           const result = await channel.startQuiz(
             channelId,
@@ -32,6 +35,7 @@ export default {
             origin,
             env.SLACK_BOT_TOKEN ?? "",
           );
+
           // On success the question is already posted in the channel;
           // only send an ephemeral for errors so users aren't double-pinged.
           if (!result.ok) {
@@ -45,6 +49,7 @@ export default {
             error instanceof Error
               ? error.message
               : "An unexpected error occurred. Please try again.";
+
           await context.respond({
             response_type: "ephemeral",
             text,
@@ -64,11 +69,13 @@ export default {
         // A click on the channel message carries its channel; anything else
         // (a click in a view) has no quiz to belong to.
         const channelId = "channel" in payload ? payload.channel?.id : undefined;
+
         if (!answerId || !channelId) return "";
 
         const channel = env.CHANNEL_OBJECT.get(
           env.CHANNEL_OBJECT.idFromName(channelId),
         );
+
         await channel.submitAnswer(
           payload.user.id,
           answerId,
@@ -77,6 +84,7 @@ export default {
           // for delivery lag.
           Number(action.action_ts) * 1000,
         );
+
         return "";
       },
     );
@@ -105,10 +113,12 @@ export default {
             response_type: "ephemeral",
             text: "That quiz's recap is no longer available.",
           });
+
           return "";
         }
 
         type OpenView = Parameters<typeof context.client.views.open>[0]["view"];
+
         try {
           await context.client.views.open({
             trigger_id: payload.trigger_id,
@@ -119,6 +129,7 @@ export default {
         } catch (error) {
           console.error("Failed to open recap:", error);
         }
+
         return "";
       },
     );

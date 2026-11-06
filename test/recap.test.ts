@@ -103,6 +103,7 @@ describe('Quiz.getRecap', () => {
     const recap = quiz.getRecap('nobody')
 
     expect(recap).toHaveLength(3)
+
     for (const entry of recap) {
       expect(entry.answered).toBe(false)
       expect(entry.points).toBe(0)
@@ -212,6 +213,7 @@ describe('renderRecapModal', () => {
     expect(sectionText(view.blocks[0])).toContain('*0 pts*')
     expect(sectionText(view.blocks[0])).toContain('0/3 answered')
     expect(questionBlocks).toHaveLength(3)
+
     for (const block of questionBlocks) {
       const text = sectionText(block)
       expect(text).toContain('(no answer)')

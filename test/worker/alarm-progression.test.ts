@@ -31,6 +31,7 @@ import {
 
 const WINDOW = '1s'
 const LONG_WINDOW = '30s'
+
 /** Matches the `RESULTS_SECS` worker test binding in vitest.config.ts. */
 const RESULTS_SECS = 1
 
@@ -49,6 +50,7 @@ async function start(
   const stub = channelObject(channelId)
   const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
   expect(result.ok).toBe(true)
+
   return stub
 }
 
@@ -78,6 +80,7 @@ function questionFrom(postedBlocks: any[], apiQuestion: TriviaQuestion): Questio
     id: option.value,
     text: option.text.text,
   }))
+
   return {
     question: apiQuestion,
     answers,
@@ -89,6 +92,7 @@ function questionFrom(postedBlocks: any[], apiQuestion: TriviaQuestion): Questio
 
 function recapButtonValue(blocks: any[]): string | undefined {
   const actions = blocks.find((block) => block.type === 'actions')
+
   return actions?.elements?.[0]?.value
 }
 
@@ -159,12 +163,14 @@ describe('alarm-driven progression', () => {
 
     // The channel is free again.
     interceptTrivia(createTriviaQuestions(2))
+
     const restart = await channelObject('C-FLOW').startQuiz(
       'C-FLOW',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(restart.ok).toBe(true)
     await dropScheduledAlarm(stub)
   })
@@ -228,8 +234,10 @@ describe('alarm-driven progression', () => {
     slack.failHttp = () => {
       if (!rateLimited) return null
       rateLimited = false
+
       return 429
     }
+
     const stub = await start('C-RATE-LIMIT', `2 ${WINDOW}`, 2)
 
     // The first results edit is rate-limited; the quiz must survive it.
@@ -248,6 +256,7 @@ describe('alarm-driven progression', () => {
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(refused.ok).toBe(false)
     await dropScheduledAlarm(stub)
   })
@@ -287,12 +296,14 @@ describe('alarm-driven progression', () => {
     // The quiz is over: no further alarm, and the channel takes `/quizzo` again.
     expect(await runDurableObjectAlarm(stub)).toBe(false)
     interceptTrivia(createTriviaQuestions(2))
+
     const restart = await channelObject('C-UPDATE-FAIL').startQuiz(
       'C-UPDATE-FAIL',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(restart.ok).toBe(true)
     await dropScheduledAlarm(stub)
   })
@@ -310,12 +321,14 @@ describe('alarm-driven progression', () => {
 
     slack.failUpdate = () => null
     interceptTrivia(createTriviaQuestions(2))
+
     const restart = await channelObject('C-DEAD-MESSAGE').startQuiz(
       'C-DEAD-MESSAGE',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(restart.ok).toBe(true)
     await dropScheduledAlarm(stub)
   })
@@ -365,6 +378,7 @@ describe('alarm-driven progression', () => {
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(refused.ok).toBe(false)
     expect(refused.text).toMatch(/already running/i)
 

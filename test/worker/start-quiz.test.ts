@@ -29,6 +29,7 @@ function interceptPostMessage(reply: object = { ok: true, ts: POST_MESSAGE_TS })
     .intercept({ path: '/api/chat.postMessage', method: 'POST' })
     .reply(200, (options) => {
       postedBodies.push(JSON.parse(options.body as string))
+
       return reply
     })
 }
@@ -67,6 +68,7 @@ function expectFirstQuestionBlocks(
   expect(options).toHaveLength(4)
   expect(options.map((option) => option.text.text).sort()).toEqual(['Correct 1', 'W1-1', 'W2-1', 'W3-1'])
   expect(new Set(options.map((option) => option.value)).size).toBe(4)
+
   for (const option of options) {
     expect(option.text).toMatchObject({ type: 'plain_text' })
   }
@@ -132,6 +134,7 @@ describe('ChannelObject.startQuiz', () => {
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(first.ok).toBe(true)
 
     // No new interceptors: a running quiz is refused before any fetch, so a
@@ -183,6 +186,7 @@ describe('ChannelObject.startQuiz', () => {
     // start in the same channel succeeds.
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
+
     const retry = await channelObject('C1').startQuiz(
       'C1',
       '3 10s',

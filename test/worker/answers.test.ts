@@ -37,13 +37,16 @@ async function start(channelId: string, args: string, questionCount: number) {
   const stub = channelObject(channelId)
   const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
   expect(result.ok).toBe(true)
+
   return stub
 }
 
 /** The answer IDs are generated per question, so they only exist in the blocks. */
 function optionValue(blocks: any[], text: string): string {
   const option = blocks[1].accessory.options.find((o: any) => o.text.text === text)
+
   if (!option) throw new Error(`No option ${text} in ${JSON.stringify(blocks[1].accessory.options)}`)
+
   return option.value
 }
 
@@ -54,20 +57,25 @@ function blockId(blocks: any[]): string {
 /** The `N. <@user>: P points · ⚡ B · a/b answered` lines of the final summary. */
 function finalLeaderboard(blocks: any[]): string[] {
   const text: string = blocks[1].text.text
+
   return text.split('\n').slice(1)
 }
 
 /** A final summary line split into its parts, for bonuses that depend on timing. */
 function parseEntry(line: string) {
   const match = /^(\d+)\. <@([^>]+)>: (\d+) points? · ⚡ (\d+\.\d\d) · (\d+\/\d+) answered$/.exec(line)
+
   if (!match) throw new Error(`Unexpected leaderboard line: ${line}`)
   const [, rank, userId, points, speedBonus, answered] = match
+
   return { rank: Number(rank), userId, points: Number(points), answered, speedBonus: Number(speedBonus) }
 }
 
 function frame(calls: { blocks: any[] }[], header: string): any[] {
   const call = calls.find((c) => headerText(c.blocks) === header)
+
   if (!call) throw new Error(`No frame ${header}`)
+
   return call.blocks
 }
 
@@ -80,20 +88,24 @@ async function sign(body: string, timestamp: string): Promise<string> {
     false,
     ['sign'],
   )
+
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
     new TextEncoder().encode(`v0:${timestamp}:${body}`),
   )
+
   const hex = [...new Uint8Array(signature)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+
   return `v0=${hex}`
 }
 
 /** A signed POST to the events endpoint, the shape Slack dispatches to. */
 async function slackRequest(body: string): Promise<Request> {
   const timestamp = Math.floor(Date.now() / 1000).toString()
+
   return new Request(`https://example.com${SLACK_EVENTS_PATH}`, {
     method: 'POST',
     headers: {
@@ -229,12 +241,14 @@ describe('recording answers', () => {
 
     // The channel is free, and the ignored answer did not leak into a new quiz.
     interceptTrivia(createTriviaQuestions(1))
+
     const restart = await channelObject('C-FINISHED').startQuiz(
       'C-FINISHED',
       `1 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
       SLACK_BOT_TOKEN,
     )
+
     expect(restart.ok).toBe(true)
   })
 
@@ -268,11 +282,13 @@ describe('recording answers', () => {
     })
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(new URLSearchParams({ payload }).toString()),
       env,
       ctx,
     )
+
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
 
