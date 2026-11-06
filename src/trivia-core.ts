@@ -1,20 +1,19 @@
 import crypto from "node:crypto";
 import { Effect, Option, Schema } from "effect";
 
-/** A question as The Trivia API returns it. */
+/**
+ * A question as The Trivia API returns it, cut down to the fields the app
+ * reads; decoding drops the rest. Running quizzes store their pending
+ * questions and decode them again on every alarm, so checking fields nothing
+ * uses would let an API change, or a row stored before one, strand a live quiz.
+ */
 export const TriviaQuestion = Schema.Struct({
-  category: Schema.String,
   id: Schema.String,
   correctAnswer: Schema.String,
   incorrectAnswers: Schema.Tuple([Schema.String, Schema.String, Schema.String]),
   question: Schema.Struct({
     text: Schema.String,
   }),
-  tags: Schema.Array(Schema.String),
-  type: Schema.Literal("text_choice"),
-  difficulty: Schema.Literals(["easy", "medium", "hard"]),
-  regions: Schema.Array(Schema.String),
-  isNiche: Schema.Boolean,
 });
 
 export type TriviaQuestion = typeof TriviaQuestion.Type;

@@ -16,7 +16,6 @@ import {
   sleep,
   waitForCalls,
   COUNTDOWN_ORIGIN,
-  SLACK_BOT_TOKEN,
 } from './fixtures'
 
 /**
@@ -35,7 +34,7 @@ const slack = new SlackRecorder()
 async function start(channelId: string, args: string, questionCount: number) {
   interceptTrivia(createTriviaQuestions(questionCount))
   const stub = channelObject(channelId)
-  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN)
   expect(result.ok).toBe(true)
 
   return stub
@@ -246,7 +245,6 @@ describe('recording answers', () => {
       'C-FINISHED',
       `1 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(restart.ok).toBe(true)

@@ -6,7 +6,6 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll } from "vitest"
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import type { TriviaQuestion } from '../../src/trivia-core'
 import { renderRecapModal } from '../../src/slack-ui'
 import {
   SlackRecorder,
@@ -18,8 +17,8 @@ import {
   slackRequest,
   waitForCalls,
   COUNTDOWN_ORIGIN,
-  SLACK_BOT_TOKEN,
   type SlackResponse,
+  type TriviaApiQuestion,
 } from './fixtures'
 
 /**
@@ -39,7 +38,7 @@ const RESPONSE_URL_PATH = '/actions/T1/123/abc'
 const slack = new SlackRecorder()
 
 /** Questions whose text names the quiz, so a recap can only match one of them. */
-function questionsFor(label: string, count: number): TriviaQuestion[] {
+function questionsFor(label: string, count: number): TriviaApiQuestion[] {
   return createTriviaQuestions(count, label).map((question) => ({
     ...question,
     question: { text: `${label} question ${question.id}?` },
@@ -65,7 +64,7 @@ async function playQuiz(label: string): Promise<string> {
   const before = slack.calls.length
   interceptTrivia(questionsFor(label, 1))
   const stub = channelObject(CHANNEL)
-  const started = await stub.startQuiz(CHANNEL, '1 2s', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+  const started = await stub.startQuiz(CHANNEL, '1 2s', COUNTDOWN_ORIGIN)
   expect(started.ok).toBe(true)
 
   const posted = slack.calls[before]

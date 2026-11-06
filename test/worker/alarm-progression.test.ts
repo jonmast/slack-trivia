@@ -14,7 +14,6 @@ import {
   waitForCalls,
   COUNTDOWN_ORIGIN,
   POST_MESSAGE_TS,
-  SLACK_BOT_TOKEN,
 } from './fixtures'
 
 /**
@@ -48,7 +47,7 @@ async function start(
 ) {
   interceptTrivia(createTriviaQuestions(questionCount))
   const stub = channelObject(channelId)
-  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN)
   expect(result.ok).toBe(true)
 
   return stub
@@ -168,7 +167,6 @@ describe('alarm-driven progression', () => {
       'C-FLOW',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(restart.ok).toBe(true)
@@ -254,7 +252,6 @@ describe('alarm-driven progression', () => {
       'C-RATE-LIMIT',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(refused.ok).toBe(false)
@@ -301,7 +298,6 @@ describe('alarm-driven progression', () => {
       'C-UPDATE-FAIL',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(restart.ok).toBe(true)
@@ -326,7 +322,33 @@ describe('alarm-driven progression', () => {
       'C-DEAD-MESSAGE',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
+    )
+
+    expect(restart.ok).toBe(true)
+    await dropScheduledAlarm(stub)
+  })
+
+  it('frees the channel when the running quiz can no longer be read', async () => {
+    const stub = await start('C-UNREADABLE', `2 ${LONG_WINDOW}`, 2)
+
+    // A stored quiz this code cannot decode, which every alarm would otherwise
+    // fail on, holding the channel forever.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE quizzes SET state = '{}' WHERE status = 'running'")
+    })
+
+    await fireAlarm(stub)
+
+    // There is no leaderboard to show, but the quiz is over: no further alarm,
+    // and the channel takes `/quizzo` again.
+    expect(slack.updates).toHaveLength(0)
+    expect(await runDurableObjectAlarm(stub)).toBe(false)
+    interceptTrivia(createTriviaQuestions(2))
+
+    const restart = await channelObject('C-UNREADABLE').startQuiz(
+      'C-UNREADABLE',
+      `2 ${LONG_WINDOW}`,
+      COUNTDOWN_ORIGIN,
     )
 
     expect(restart.ok).toBe(true)
@@ -376,7 +398,6 @@ describe('alarm-driven progression', () => {
       'C-TWO',
       `2 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(refused.ok).toBe(false)

@@ -49,16 +49,10 @@ describe('Utility Functions', () => {
 
 describe('Question Logic', () => {
   const mockApiQuestion: TriviaQuestion = {
-    category: 'Test',
     id: 'test-1',
     correctAnswer: 'Correct Answer',
     incorrectAnswers: ['Wrong1', 'Wrong2', 'Wrong3'],
-    question: { text: 'What is the test question?' },
-    tags: ['test'],
-    type: 'text_choice',
-    difficulty: 'easy',
-    regions: ['US'],
-    isNiche: false
+    question: { text: 'What is the test question?' }
   }
 
   describe('createQuestion', () => {
@@ -162,13 +156,31 @@ describe('TriviaQuestion', () => {
     isNiche: false,
   }
 
-  it('decodes a question as The Trivia API sends it', () => {
-    expect(decode(payload)).toEqual(payload)
+  it('decodes a question as The Trivia API sends it, keeping what the app reads', () => {
+    expect(decode(payload)).toEqual({
+      id: '622a1c357cc59eab6f94fd8e',
+      correctAnswer: 'Mercury',
+      incorrectAnswers: ['Venus', 'Mars', 'Jupiter'],
+      question: { text: 'Which planet is closest to the Sun?' },
+    })
+  })
+
+  it('tolerates changes to fields the app never reads', () => {
+    const changed = {
+      ...payload,
+      category: undefined,
+      tags: null,
+      type: 'image_choice',
+      difficulty: 'impossible',
+      isNiche: 'sometimes',
+    }
+
+    expect(decode(changed)).toEqual(decode(payload))
   })
 
   it('rejects a payload it could not ask', () => {
     expect(() => decode({ ...payload, incorrectAnswers: ['Venus', 'Mars'] })).toThrow(Schema.SchemaError)
     expect(() => decode({ ...payload, question: 'Which planet?' })).toThrow(Schema.SchemaError)
-    expect(() => decode({ ...payload, type: 'image_choice' })).toThrow(Schema.SchemaError)
+    expect(() => decode({ ...payload, correctAnswer: undefined })).toThrow(Schema.SchemaError)
   })
 })

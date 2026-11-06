@@ -3,7 +3,6 @@ import type { TriviaQuestion } from '../../src/trivia-core'
 
 /** Shared plumbing for worker tests: the channel stub and the fake Slack/Trivia network. */
 
-export const SLACK_BOT_TOKEN = 'xoxb-test-token'
 export const COUNTDOWN_ORIGIN = 'https://example.com'
 export const POST_MESSAGE_TS = '1234567890.0001'
 
@@ -11,8 +10,21 @@ export function channelObject(channelId: string) {
   return env.CHANNEL_OBJECT.get(env.CHANNEL_OBJECT.idFromName(channelId))
 }
 
+/**
+ * A question as the Trivia API sends it: the fields the app reads, plus the
+ * ones decoding drops.
+ */
+export type TriviaApiQuestion = TriviaQuestion & {
+  category: string
+  tags: string[]
+  type: string
+  difficulty: string
+  regions: string[]
+  isNiche: boolean
+}
+
 /** Questions as the Trivia API returns them; ids are `q-1`, `q-2`, ... */
-export function createTriviaQuestions(count: number, prefix = 'q'): TriviaQuestion[] {
+export function createTriviaQuestions(count: number, prefix = 'q'): TriviaApiQuestion[] {
   return Array.from({ length: count }, (_, i) => ({
     category: 'Test',
     id: `${prefix}-${i + 1}`,
@@ -148,7 +160,7 @@ export class SlackRecorder {
 }
 
 /** One trivia fetch; the worker asks for `/v2/questions?limit=N`. */
-export function interceptTrivia(questions: TriviaQuestion[]): void {
+export function interceptTrivia(questions: TriviaApiQuestion[]): void {
   fetchMock
     .get('https://the-trivia-api.com')
     .intercept({ path: /^\/v2\/questions/, method: 'GET' })

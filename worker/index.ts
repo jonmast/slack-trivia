@@ -33,7 +33,6 @@ export default {
             channelId,
             payload.text ?? "",
             origin,
-            env.SLACK_BOT_TOKEN ?? "",
           );
 
           // On success the question is already posted in the channel;
