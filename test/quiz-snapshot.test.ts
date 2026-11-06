@@ -42,7 +42,7 @@ function questionSource(questions: TriviaQuestion[]): QuestionSource {
  * has joined without answering), and one correct answer given fast enough to
  * earn a bonus that a changed answer can take away.
  */
-function quizInProgress(): { quiz: Quiz; source: QuestionSource; q1: Question; q2: Question } {
+function quizInProgress() {
   const source = questionSource(triviaQuestions(3))
   const quiz = new Quiz(source, 3, TIMEOUT)
 
@@ -69,32 +69,13 @@ function throughStorage(snapshot: QuizSnapshot): QuizSnapshot {
   return JSON.parse(JSON.stringify(snapshot))
 }
 
-function assertPlainJson(value: unknown, path = 'snapshot'): void {
-  if (value === null) return
-
-  if (Array.isArray(value)) {
-    value.forEach((item, i) => assertPlainJson(item, `${path}[${i}]`))
-
-    return
-  }
-
-  if (typeof value === 'object') {
-    expect(Object.getPrototypeOf(value), `${path} is not a plain object`).toBe(Object.prototype)
-
-    for (const [key, child] of Object.entries(value)) assertPlainJson(child, `${path}.${key}`)
-
-    return
-  }
-
-  expect(['string', 'number', 'boolean'], `${path} is ${typeof value}`).toContain(typeof value)
-}
-
 describe('Quiz snapshot', () => {
   it('is plain JSON that survives a stringify round-trip unchanged', () => {
     const { quiz } = quizInProgress()
     const snapshot = quiz.toSnapshot()
 
-    assertPlainJson(snapshot)
+    // Strict equality fails on any Date, Map, Set or class instance, which a
+    // JSON round-trip turns into something else.
     expect(throughStorage(snapshot)).toStrictEqual(snapshot)
   })
 
@@ -197,7 +178,7 @@ describe('Quiz snapshot', () => {
         ...rest,
         score: rest.score + speedBonus,
       })),
-    } as QuizSnapshot
+    }
 
     const rehydrated = Quiz.fromSnapshot(v1, source)
 

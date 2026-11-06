@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import type { AnyMessageBlock, AnyModalBlock } from 'slack-cloudflare-workers'
 import { Quiz, SPEED_BONUS_MAX, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
 import { renderRecapModal, renderFinalSummary } from '../src/slack-ui'
-import { createMockQuestions, createQuestionSource } from './test-utils'
+import { blockText, createMockQuestions, createQuestionSource, findBlock, findBlocks } from './test-utils'
 
 describe('Quiz.getRecap', () => {
   let store: QuestionSource
@@ -155,7 +156,7 @@ describe('renderRecapModal', () => {
     },
   ]
 
-  const sectionText = (block: any) => block.text.text as string
+  const sectionText = (block: AnyModalBlock): string => blockText(block)
 
   it('is a modal with one section per question after the summary and legend', () => {
     const view = renderRecapModal(recap)
@@ -225,7 +226,8 @@ describe('renderRecapModal', () => {
 })
 
 describe('renderFinalSummary leaderboard', () => {
-  const leaderboardText = (blocks: any[]) => blocks[1].text.text as string
+  const leaderboardText = (blocks: AnyMessageBlock[]): string =>
+    blockText(findBlocks(blocks, 'section')[1])
 
   it('ranks by points, lists the speed bonus separately and says it only breaks ties', () => {
     const blocks = renderFinalSummary(
@@ -259,9 +261,8 @@ describe('renderFinalSummary leaderboard', () => {
 describe('renderFinalSummary recap button', () => {
   it('includes a recap button carrying the quiz message ts', () => {
     const blocks = renderFinalSummary([], 3, '1234567890.123')
-    const actions = blocks.find((b) => b.type === 'actions') as any
+    const actions = findBlock(blocks, 'actions')
 
-    expect(actions).toBeDefined()
     expect(actions.elements[0]).toMatchObject({
       type: 'button',
       action_id: 'recap',

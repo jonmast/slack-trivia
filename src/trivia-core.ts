@@ -110,6 +110,12 @@ export type QuizSnapshot = {
   users: string[];
 };
 
+/** How far a quiz has progressed: questions asked out of the configured total. */
+export type QuizProgress = {
+  current: number;
+  total: number;
+};
+
 export const TIMEOUT_SECS = 5;
 export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
@@ -533,7 +539,7 @@ export class Quiz {
     return this.state.maxQuestions;
   }
 
-  getProgress(): { current: number; total: number } {
+  getProgress(): QuizProgress {
     return {
       current: this.state.questions.length,
       total: this.state.maxQuestions,

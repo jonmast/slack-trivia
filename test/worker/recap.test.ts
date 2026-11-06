@@ -13,10 +13,13 @@ import {
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
+  parseSlackResponse,
+  requestBodyText,
   slackRequest,
   waitForCalls,
   COUNTDOWN_ORIGIN,
   SLACK_BOT_TOKEN,
+  type SlackResponse,
 } from './fixtures'
 
 /**
@@ -108,7 +111,7 @@ function actionBody(userId: string, messageTs: string): string {
 type Opened = { trigger_id?: string; view?: any }
 
 let opened: Opened | undefined
-let replied: any
+let replied: SlackResponse | undefined
 
 /**
  * Capture whatever a Recap click produces. The interceptors persist for the
@@ -126,7 +129,7 @@ function interceptClicks(): void {
     .intercept({ path: '/api/views.open', method: 'POST' })
     .reply(200, (options) => {
       // The Workers Slack client posts form-encoded arguments.
-      const form = new URLSearchParams(options.body as string)
+      const form = new URLSearchParams(requestBodyText(options.body))
       opened = {
         trigger_id: form.get('trigger_id') ?? undefined,
         view: JSON.parse(form.get('view') ?? 'null'),
@@ -139,7 +142,7 @@ function interceptClicks(): void {
     .get(RESPONSE_URL_ORIGIN)
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
-      replied = JSON.parse(options.body as string)
+      replied = parseSlackResponse(options.body)
 
       return 'ok'
     })

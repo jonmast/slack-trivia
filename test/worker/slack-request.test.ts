@@ -6,7 +6,7 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import { slackRequest } from './fixtures'
+import { parseSlackResponse, slackRequest, type SlackResponse } from './fixtures'
 
 const RESPONSE_URL_ORIGIN = 'https://hooks.slack.test'
 const RESPONSE_URL_PATH = '/commands/T1/123/abc'
@@ -61,16 +61,14 @@ function interceptPostMessage(ts = '1234567890.123') {
     .reply(200, { ok: true, ts })
 }
 
-type Reply = { response_type?: string; text?: string }
-
 /** Captures the one message the lazy listener posts back to response_url. */
-function interceptResponseUrl(): () => Reply | undefined {
-  let replied: Reply | undefined
+function interceptResponseUrl(): () => SlackResponse | undefined {
+  let replied: SlackResponse | undefined
   fetchMock
     .get(RESPONSE_URL_ORIGIN)
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
-      replied = JSON.parse(options.body as string)
+      replied = parseSlackResponse(options.body)
 
       return 'ok'
     })

@@ -18,7 +18,7 @@ describe('Utility Functions', () => {
       
       expect(answer).toHaveProperty('id')
       expect(answer).toHaveProperty('text', text)
-      expect(typeof answer.id).toBe('string')
+      expect(answer.id).toEqual(expect.any(String))
       expect(answer.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
     })
 

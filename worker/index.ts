@@ -117,14 +117,10 @@ export default {
           return "";
         }
 
-        type OpenView = Parameters<typeof context.client.views.open>[0]["view"];
-
         try {
           await context.client.views.open({
             trigger_id: payload.trigger_id,
-            // The shared renderer builds Slack's modal shape against
-            // `@slack/types`; the Workers client declares its own copy.
-            view: renderRecapModal(recap) as unknown as OpenView,
+            view: renderRecapModal(recap),
           });
         } catch (error) {
           console.error("Failed to open recap:", error);

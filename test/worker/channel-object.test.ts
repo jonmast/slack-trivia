@@ -7,15 +7,17 @@ import {
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
+  parseSlackMessage,
+  type SlackMessageBody,
 } from './fixtures'
 
 function interceptPostMessage(ts = POST_MESSAGE_TS) {
-  let body: Record<string, unknown> | undefined
+  let body: SlackMessageBody | undefined
   fetchMock
     .get('https://slack.com')
     .intercept({ path: '/api/chat.postMessage', method: 'POST' })
     .reply(200, (opts) => {
-      body = JSON.parse(opts.body as string)
+      body = parseSlackMessage(opts.body)
 
       return { ok: true, ts }
     })
@@ -45,7 +47,7 @@ describe('ChannelObject.startQuiz', () => {
     const body = getBody()!
     expect(body.channel).toBe('C1')
     expect(Array.isArray(body.blocks)).toBe(true)
-    const blocks = body.blocks as any[]
+    const blocks = body.blocks
     expect(blocks).toHaveLength(3)
     // Header: Question 1/3:
     expect(blocks[0].type).toBe('header')
@@ -70,7 +72,7 @@ describe('ChannelObject.startQuiz', () => {
 
     expect(result.ok).toBe(true)
     const body = getBody()!
-    const blocks = body.blocks as any[]
+    const blocks = body.blocks
     expect(blocks[0].text.text).toBe('Question 1/3:')
     // Default 5s countdown
     expect(blocks[2].elements[0].image_url).toMatch(/countdown\/5\.gif/)
@@ -132,7 +134,7 @@ describe('ChannelObject.startQuiz', () => {
     await channelObject('C5').startQuiz('C5', '1 5s', 'https://trivia.app', SLACK_BOT_TOKEN)
 
     const body = getBody()!
-    const blocks = body.blocks as any[]
+    const blocks = body.blocks
     expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/trivia\.app\/countdown\/5\.gif/)
   })
 

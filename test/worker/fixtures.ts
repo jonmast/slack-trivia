@@ -27,12 +27,55 @@ export function createTriviaQuestions(count: number, prefix = 'q'): TriviaQuesti
   }))
 }
 
-export type SlackCall = {
-  method: 'chat.postMessage' | 'chat.update'
+/** A `chat.postMessage` or `chat.update` body, as Slack receives it. */
+export type SlackMessageBody = {
   channel: string
-  ts?: string
   text: string
+  ts?: string
   blocks: any[]
+}
+
+export type SlackCall = SlackMessageBody & {
+  method: 'chat.postMessage' | 'chat.update'
+}
+
+/** A reply the Worker posts to a command's or button's `response_url`. */
+export type SlackResponse = {
+  response_type?: string
+  text?: string
+}
+
+/**
+ * The text of a Slack request body captured by `fetchMock`. The Worker builds
+ * every Slack body as text (`JSON.stringify` for the JSON APIs,
+ * `URLSearchParams` for the form APIs), so the capture is a string rather than
+ * a stream.
+ */
+export function requestBodyText(body: BodyInit | undefined): string {
+  // SAFETY: the Worker's own Slack calls post strings, as described above.
+  return body as string
+}
+
+/** Parse the JSON body the Worker posts to `chat.postMessage`/`chat.update`. */
+export function parseSlackMessage(body: BodyInit | undefined): SlackMessageBody {
+  const parsed = JSON.parse(requestBodyText(body))
+
+  return {
+    channel: parsed.channel,
+    text: parsed.text,
+    blocks: parsed.blocks,
+    ts: parsed.ts,
+  }
+}
+
+/** Parse the reply the Worker posts to a `response_url`. */
+export function parseSlackResponse(body: BodyInit | undefined): SlackResponse {
+  const parsed = JSON.parse(requestBodyText(body))
+
+  return {
+    response_type: parsed.response_type,
+    text: parsed.text,
+  }
 }
 
 /**
@@ -73,7 +116,7 @@ export class SlackRecorder {
       .get('https://slack.com')
       .intercept({ path: '/api/chat.postMessage', method: 'POST' })
       .reply(200, (options) => {
-        const body = JSON.parse(options.body as string)
+        const body = parseSlackMessage(options.body)
         this.calls.push({ method: 'chat.postMessage', ...body })
         // Slack never reuses a timestamp; the first post gets POST_MESSAGE_TS.
         this.posted += 1
@@ -86,7 +129,7 @@ export class SlackRecorder {
       .get('https://slack.com')
       .intercept({ path: '/api/chat.update', method: 'POST' })
       .reply((options) => {
-        const body = JSON.parse(options.body as string)
+        const body = parseSlackMessage(options.body)
         const call: SlackCall = { method: 'chat.update', ...body }
         this.calls.push(call)
 
@@ -165,13 +208,13 @@ export async function slackRequest(
 ): Promise<Request> {
   const timestamp = Math.floor(Date.now() / 1000).toString()
 
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     'content-type': 'application/x-www-form-urlencoded',
-  }
+  })
 
   if (signed) {
-    headers['x-slack-request-timestamp'] = timestamp
-    headers['x-slack-signature'] = await signSlackBody(body, timestamp)
+    headers.set('x-slack-request-timestamp', timestamp)
+    headers.set('x-slack-signature', await signSlackBody(body, timestamp))
   }
 
   return new Request(`${COUNTDOWN_ORIGIN}${path}`, { method: 'POST', headers, body })

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { optionLabel, OPTION_TEXT_MAX, renderChannelQuestion } from '../src/slack-ui'
 import type { Question } from '../src/trivia-core'
-import { createMockTriviaQuestion } from './test-utils'
+import { createMockTriviaQuestion, findBlock, radioButtons } from './test-utils'
 
 describe('optionLabel', () => {
   it('returns short text unchanged', () => {
@@ -45,7 +45,7 @@ describe('renderChannelQuestion', () => {
     }
 
     const blocks = renderChannelQuestion(question, 10, 1, 2, 'https://trivia.test/countdown/10.gif')
-    const options = (blocks[1] as any).accessory.options
+    const options = radioButtons(findBlock(blocks, 'section')).options
     expect(options).toHaveLength(2)
 
     for (const option of options) {

@@ -7,6 +7,8 @@ import {
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
+  parseSlackMessage,
+  type SlackMessageBody,
 } from './fixtures'
 
 /**
@@ -20,15 +22,18 @@ import {
  * so any unmocked request fails the test instead of reaching the network.
  */
 
-let postedBodies: Record<string, any>[] = []
+/** The `chat.postMessage` response body; `ts` is absent when the post fails. */
+type PostMessageReply = { ok: boolean; ts?: string }
+
+let postedBodies: SlackMessageBody[] = []
 
 /** One chat.postMessage reply per call; request bodies collect in `postedBodies`. */
-function interceptPostMessage(reply: object = { ok: true, ts: POST_MESSAGE_TS }): void {
+function interceptPostMessage(reply: PostMessageReply = { ok: true, ts: POST_MESSAGE_TS }): void {
   fetchMock
     .get('https://slack.com')
     .intercept({ path: '/api/chat.postMessage', method: 'POST' })
     .reply(200, (options) => {
-      postedBodies.push(JSON.parse(options.body as string))
+      postedBodies.push(parseSlackMessage(options.body))
 
       return reply
     })
