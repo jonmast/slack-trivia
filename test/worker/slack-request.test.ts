@@ -6,7 +6,7 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import { slackRequest } from './fixtures'
+import { SLACK_AUTH_HEADERS, parseSlackResponse, slackRequest, type SlackResponse } from './fixtures'
 
 const RESPONSE_URL_ORIGIN = 'https://hooks.slack.test'
 const RESPONSE_URL_PATH = '/commands/T1/123/abc'
@@ -46,6 +46,7 @@ function interceptTrivia(count: number) {
     regions: ['US'],
     isNiche: false,
   }))
+
   fetchMock
     .get('https://the-trivia-api.com')
     .intercept({ path: /^\/v2\/questions/, method: 'GET' })
@@ -56,22 +57,22 @@ function interceptTrivia(count: number) {
 function interceptPostMessage(ts = '1234567890.123') {
   fetchMock
     .get('https://slack.com')
-    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
     .reply(200, { ok: true, ts })
 }
 
-type Reply = { response_type?: string; text?: string }
-
 /** Captures the one message the lazy listener posts back to response_url. */
-function interceptResponseUrl(): () => Reply | undefined {
-  let replied: Reply | undefined
+function interceptResponseUrl(): () => SlackResponse | undefined {
+  let replied: SlackResponse | undefined
   fetchMock
     .get(RESPONSE_URL_ORIGIN)
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
-      replied = JSON.parse(options.body as string)
+      replied = parseSlackResponse(options.body)
+
       return 'ok'
     })
+
   return () => replied
 }
 
@@ -94,11 +95,13 @@ describe('Slack request handling', () => {
 
   it('rejects an unsigned request', async () => {
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s'), false),
       env,
       ctx,
     )
+
     await waitOnExecutionContext(ctx)
 
     expect(response.status).toBe(401)
@@ -123,6 +126,7 @@ describe('Slack request handling', () => {
     // No response_url interceptor—on success the Worker sends no ephemeral.
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('3 10s')),
       env,
@@ -140,11 +144,13 @@ describe('Slack request handling', () => {
     const replied = interceptResponseUrl()
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(SLACK_EVENTS_PATH, commandBody('999 10s')),
       env,
       ctx,
     )
+
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
     // The lazy listener fires after the ack via ctx.waitUntil(); give it time

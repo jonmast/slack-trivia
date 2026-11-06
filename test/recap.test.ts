@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import type { AnyMessageBlock, AnyModalBlock } from 'slack-cloudflare-workers'
+import { Effect } from 'effect'
 import { Quiz, SPEED_BONUS_MAX, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
 import { renderRecapModal, renderFinalSummary } from '../src/slack-ui'
-import { createMockQuestions, createQuestionSource } from './test-utils'
+import { blockText, createMockQuestions, createQuestionSource, findBlock, findBlocks } from './test-utils'
 
 describe('Quiz.getRecap', () => {
   let store: QuestionSource
@@ -13,9 +15,9 @@ describe('Quiz.getRecap', () => {
   })
 
   it('lists every question in order with all four options', () => {
-    const q1 = quiz.startQuiz()
-    const q2 = quiz.nextQuestion()
-    quiz.nextQuestion()
+    const q1 = Effect.runSync(quiz.startQuiz())
+    const q2 = Effect.runSync(quiz.nextQuestion())
+    Effect.runSync(quiz.nextQuestion())
 
     const recap = quiz.getRecap('u1')
 
@@ -26,9 +28,9 @@ describe('Quiz.getRecap', () => {
   })
 
   it('marks the selected option and the correct option', () => {
-    const q = quiz.startQuiz()
+    const q = Effect.runSync(quiz.startQuiz())
     const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!
-    quiz.submitAnswer('u1', wrong.id, q.timestamp)
+    Effect.runSync(quiz.submitAnswer('u1', wrong.id, q.timestamp))
 
     const [entry] = quiz.getRecap('u1')
 
@@ -39,9 +41,9 @@ describe('Quiz.getRecap', () => {
   })
 
   it('awards a point and a separate speed bonus for a correct answer', () => {
-    const q = quiz.startQuiz()
+    const q = Effect.runSync(quiz.startQuiz())
     const halfway = new Date(q.timestamp.getTime() + 5_000)
-    quiz.submitAnswer('u1', q.correctAnswer.id, halfway)
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, halfway))
 
     const [entry] = quiz.getRecap('u1')
 
@@ -51,17 +53,17 @@ describe('Quiz.getRecap', () => {
   })
 
   it('awards zero for a wrong answer', () => {
-    const q = quiz.startQuiz()
+    const q = Effect.runSync(quiz.startQuiz())
     const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!
-    quiz.submitAnswer('u1', wrong.id, q.timestamp)
+    Effect.runSync(quiz.submitAnswer('u1', wrong.id, q.timestamp))
 
     expect(quiz.getRecap('u1')[0]).toMatchObject({ points: 0, speedBonus: 0 })
   })
 
   it('reports a skipped question as unanswered with only the correct option marked', () => {
-    const q = quiz.startQuiz()
-    quiz.nextQuestion()
-    quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp, q.question.id)
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.nextQuestion())
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp, q.question.id))
 
     const [, skipped] = quiz.getRecap('u1')
 
@@ -72,10 +74,10 @@ describe('Quiz.getRecap', () => {
   })
 
   it('reflects a changed answer', () => {
-    const q = quiz.startQuiz()
+    const q = Effect.runSync(quiz.startQuiz())
     const wrong = q.answers.find((a) => a.id !== q.correctAnswer.id)!
-    quiz.submitAnswer('u1', wrong.id, q.timestamp)
-    quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp)
+    Effect.runSync(quiz.submitAnswer('u1', wrong.id, q.timestamp))
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp))
 
     const [entry] = quiz.getRecap('u1')
 
@@ -86,23 +88,24 @@ describe('Quiz.getRecap', () => {
   })
 
   it('still works after the quiz has ended', () => {
-    const q = quiz.startQuiz()
-    quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp)
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp))
     quiz.endQuiz()
 
     expect(quiz.getRecap('u1')[0].answered).toBe(true)
   })
 
   it('gives a non-participant the full quiz with nothing selected and zero points', () => {
-    const q1 = quiz.startQuiz()
-    quiz.submitAnswer('u1', q1.correctAnswer.id, q1.timestamp)
-    quiz.nextQuestion()
-    quiz.nextQuestion()
+    const q1 = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', q1.correctAnswer.id, q1.timestamp))
+    Effect.runSync(quiz.nextQuestion())
+    Effect.runSync(quiz.nextQuestion())
     quiz.endQuiz()
 
     const recap = quiz.getRecap('nobody')
 
     expect(recap).toHaveLength(3)
+
     for (const entry of recap) {
       expect(entry.answered).toBe(false)
       expect(entry.points).toBe(0)
@@ -154,7 +157,7 @@ describe('renderRecapModal', () => {
     },
   ]
 
-  const sectionText = (block: any) => block.text.text as string
+  const sectionText = (block: AnyModalBlock): string => blockText(block)
 
   it('is a modal with one section per question after the summary and legend', () => {
     const view = renderRecapModal(recap)
@@ -212,6 +215,7 @@ describe('renderRecapModal', () => {
     expect(sectionText(view.blocks[0])).toContain('*0 pts*')
     expect(sectionText(view.blocks[0])).toContain('0/3 answered')
     expect(questionBlocks).toHaveLength(3)
+
     for (const block of questionBlocks) {
       const text = sectionText(block)
       expect(text).toContain('(no answer)')
@@ -223,7 +227,8 @@ describe('renderRecapModal', () => {
 })
 
 describe('renderFinalSummary leaderboard', () => {
-  const leaderboardText = (blocks: any[]) => blocks[1].text.text as string
+  const leaderboardText = (blocks: AnyMessageBlock[]): string =>
+    blockText(findBlocks(blocks, 'section')[1])
 
   it('ranks by points, lists the speed bonus separately and says it only breaks ties', () => {
     const blocks = renderFinalSummary(
@@ -257,9 +262,8 @@ describe('renderFinalSummary leaderboard', () => {
 describe('renderFinalSummary recap button', () => {
   it('includes a recap button carrying the quiz message ts', () => {
     const blocks = renderFinalSummary([], 3, '1234567890.123')
-    const actions = blocks.find((b) => b.type === 'actions') as any
+    const actions = findBlock(blocks, 'actions')
 
-    expect(actions).toBeDefined()
     expect(actions.elements[0]).toMatchObject({
       type: 'button',
       action_id: 'recap',

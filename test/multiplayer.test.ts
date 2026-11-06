@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { Effect } from 'effect'
 import { Quiz, SPEED_BONUS_MAX, QuizCompleteError, type QuestionSource } from '../src/trivia-core'
-import { createQuestionSource } from './test-utils'
+import { createQuestionSource, failureOf } from './test-utils'
 
 describe('Multiplayer functionality', () => {
   let store: QuestionSource
@@ -21,20 +22,20 @@ describe('Multiplayer functionality', () => {
     expect(users).toEqual(['user1', 'user2', 'user3'])
 
     // Start quiz and submit answers
-    const question = quiz.startQuiz()
+    const question = Effect.runSync(quiz.startQuiz())
     const correctAnswerId = question.correctAnswer.id
     const wrongAnswerId = question.answers.find(a => a.id !== correctAnswerId)!.id
 
     // user1 answers correctly
-    const result1 = quiz.submitAnswer('user1', correctAnswerId, new Date())
+    const result1 = Effect.runSync(quiz.submitAnswer('user1', correctAnswerId, new Date()))
     expect(result1).toBe(true)
 
     // user2 answers incorrectly
-    const result2 = quiz.submitAnswer('user2', wrongAnswerId, new Date())
+    const result2 = Effect.runSync(quiz.submitAnswer('user2', wrongAnswerId, new Date()))
     expect(result2).toBe(false)
 
     // user3 answers correctly
-    const result3 = quiz.submitAnswer('user3', correctAnswerId, new Date())
+    const result3 = Effect.runSync(quiz.submitAnswer('user3', correctAnswerId, new Date()))
     expect(result3).toBe(true)
 
     // Check final scores
@@ -55,11 +56,11 @@ describe('Multiplayer functionality', () => {
 
   it('should allow changing answer and update score accordingly', () => {
     quiz.addUser('user1')
-    const question = quiz.startQuiz()
+    const question = Effect.runSync(quiz.startQuiz())
     const correctAnswerId = question.correctAnswer.id
     const wrongAnswerId = question.answers.find(a => a.id !== correctAnswerId)!.id
 
-    const result1 = quiz.submitAnswer('user1', wrongAnswerId, new Date())
+    const result1 = Effect.runSync(quiz.submitAnswer('user1', wrongAnswerId, new Date()))
     expect(result1).toBe(false)
 
     let scores = quiz.getUserScores()
@@ -67,7 +68,7 @@ describe('Multiplayer functionality', () => {
     expect(userScore?.score).toBe(0)
     expect(userScore?.totalAnswered).toBe(1)
 
-    const result2 = quiz.submitAnswer('user1', correctAnswerId, new Date())
+    const result2 = Effect.runSync(quiz.submitAnswer('user1', correctAnswerId, new Date()))
     expect(result2).toBe(true)
 
     scores = quiz.getUserScores()
@@ -83,22 +84,22 @@ describe('Multiplayer functionality', () => {
     quiz.addUser('charlie')
 
     // First question
-    let question = quiz.startQuiz()
+    let question = Effect.runSync(quiz.startQuiz())
     let correctId = question.correctAnswer.id
     let wrongId = question.answers.find(a => a.id !== correctId)!.id
 
-    quiz.submitAnswer('alice', correctId, new Date())   // alice: 1
-    quiz.submitAnswer('bob', correctId, new Date())     // bob: 1  
-    quiz.submitAnswer('charlie', wrongId, new Date())   // charlie: 0
+    Effect.runSync(quiz.submitAnswer('alice', correctId, new Date()))   // alice: 1
+    Effect.runSync(quiz.submitAnswer('bob', correctId, new Date()))     // bob: 1
+    Effect.runSync(quiz.submitAnswer('charlie', wrongId, new Date()))   // charlie: 0
 
     // Second question
-    question = quiz.nextQuestion()
+    question = Effect.runSync(quiz.nextQuestion())
     correctId = question.correctAnswer.id
     wrongId = question.answers.find(a => a.id !== correctId)!.id
 
-    quiz.submitAnswer('alice', correctId, new Date())   // alice: 2
-    quiz.submitAnswer('bob', wrongId, new Date())       // bob: 1
-    quiz.submitAnswer('charlie', correctId, new Date()) // charlie: 1
+    Effect.runSync(quiz.submitAnswer('alice', correctId, new Date()))   // alice: 2
+    Effect.runSync(quiz.submitAnswer('bob', wrongId, new Date()))       // bob: 1
+    Effect.runSync(quiz.submitAnswer('charlie', correctId, new Date())) // charlie: 1
 
     const leaderboard = quiz.getLeaderboard()
 
@@ -125,51 +126,47 @@ describe('Multiplayer functionality', () => {
     customQuiz.addUser('user1')
     
     // First question
-    const question1 = customQuiz.startQuiz()
+    const question1 = Effect.runSync(customQuiz.startQuiz())
     expect(customQuiz.isActive()).toBe(true)
     expect(customQuiz.isComplete()).toBe(false)
     
-    customQuiz.submitAnswer('user1', question1.correctAnswer.id, new Date())
+    Effect.runSync(customQuiz.submitAnswer('user1', question1.correctAnswer.id, new Date()))
     
     // Second question - should succeed
-    const question2 = customQuiz.nextQuestion()
+    const question2 = Effect.runSync(customQuiz.nextQuestion())
     expect(question2).toBeDefined()
     
-    // Third question attempt - should throw QuizCompleteError
-    expect(() => {
-      customQuiz.nextQuestion()
-    }).toThrow(QuizCompleteError)
+    // Third question attempt - should fail with QuizCompleteError
+    expect(failureOf(customQuiz.nextQuestion())).toBeInstanceOf(QuizCompleteError)
     
     const progress = customQuiz.getProgress()
     expect(progress.current).toBe(2)
     expect(progress.total).toBe(2)
   })
 
-  it('should throw error when trying to add questions beyond limit', () => {
+  it('should fail when trying to add questions beyond limit', () => {
     const maxQuestions = 1
     const customQuiz = new Quiz(store, maxQuestions)
     
-    customQuiz.startQuiz()
+    Effect.runSync(customQuiz.startQuiz())
     
-    expect(() => {
-      customQuiz.nextQuestion()
-    }).toThrow(QuizCompleteError)
+    expect(failureOf(customQuiz.nextQuestion())).toBeInstanceOf(QuizCompleteError)
   })
 
   it('should award speed bonus for faster correct answers', () => {
     quiz.addUser('fast-user')
     quiz.addUser('slow-user')
     
-    const question = quiz.startQuiz()
+    const question = Effect.runSync(quiz.startQuiz())
     const correctAnswerId = question.correctAnswer.id
     
     const baseTime = question.timestamp.getTime()
     
     const fastTimestamp = new Date(baseTime + 1000)
-    quiz.submitAnswer('fast-user', correctAnswerId, fastTimestamp)
+    Effect.runSync(quiz.submitAnswer('fast-user', correctAnswerId, fastTimestamp))
     
     const slowTimestamp = new Date(baseTime + 4000)
-    quiz.submitAnswer('slow-user', correctAnswerId, slowTimestamp)
+    Effect.runSync(quiz.submitAnswer('slow-user', correctAnswerId, slowTimestamp))
     
     const scores = quiz.getUserScores()
     const fastUserScore = scores.find(s => s.userId === 'fast-user')
@@ -188,12 +185,12 @@ describe('Multiplayer functionality', () => {
   it('should not award speed bonus for incorrect answers', () => {
     quiz.addUser('user1')
     
-    const question = quiz.startQuiz()
+    const question = Effect.runSync(quiz.startQuiz())
     const wrongAnswerId = question.answers.find(a => a.id !== question.correctAnswer.id)!.id
     
     // Fast wrong answer
     const fastTimestamp = new Date(question.timestamp.getTime() + 100)
-    const result = quiz.submitAnswer('user1', wrongAnswerId, fastTimestamp)
+    const result = Effect.runSync(quiz.submitAnswer('user1', wrongAnswerId, fastTimestamp))
     
     expect(result).toBe(false)
     

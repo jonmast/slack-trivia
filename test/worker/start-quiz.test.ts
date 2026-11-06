@@ -3,10 +3,12 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import {
   COUNTDOWN_ORIGIN,
   POST_MESSAGE_TS,
-  SLACK_BOT_TOKEN,
+  SLACK_AUTH_HEADERS,
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
+  parseSlackMessage,
+  type SlackMessageBody,
 } from './fixtures'
 
 /**
@@ -20,15 +22,19 @@ import {
  * so any unmocked request fails the test instead of reaching the network.
  */
 
-let postedBodies: Record<string, any>[] = []
+/** The `chat.postMessage` response body; `ts` is absent when the post fails. */
+type PostMessageReply = { ok: boolean; ts?: string }
+
+let postedBodies: SlackMessageBody[] = []
 
 /** One chat.postMessage reply per call; request bodies collect in `postedBodies`. */
-function interceptPostMessage(reply: object = { ok: true, ts: POST_MESSAGE_TS }): void {
+function interceptPostMessage(reply: PostMessageReply = { ok: true, ts: POST_MESSAGE_TS }): void {
   fetchMock
     .get('https://slack.com')
-    .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+    .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
     .reply(200, (options) => {
-      postedBodies.push(JSON.parse(options.body as string))
+      postedBodies.push(parseSlackMessage(options.body))
+
       return reply
     })
 }
@@ -67,6 +73,7 @@ function expectFirstQuestionBlocks(
   expect(options).toHaveLength(4)
   expect(options.map((option) => option.text.text).sort()).toEqual(['Correct 1', 'W1-1', 'W2-1', 'W3-1'])
   expect(new Set(options.map((option) => option.value)).size).toBe(4)
+
   for (const option of options) {
     expect(option.text).toMatchObject({ type: 'plain_text' })
   }
@@ -109,7 +116,6 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(result.ok).toBe(true)
@@ -130,8 +136,8 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
+
     expect(first.ok).toBe(true)
 
     // No new interceptors: a running quiz is refused before any fetch, so a
@@ -140,7 +146,6 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(second.ok).toBe(false)
@@ -154,7 +159,6 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(result.ok).toBe(false)
@@ -173,7 +177,6 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(result.ok).toBe(false)
@@ -183,11 +186,11 @@ describe('ChannelObject.startQuiz', () => {
     // start in the same channel succeeds.
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
+
     const retry = await channelObject('C1').startQuiz(
       'C1',
       '3 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(retry.ok).toBe(true)
@@ -199,7 +202,6 @@ describe('ChannelObject.startQuiz', () => {
       'C1',
       '999 10s',
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
 
     expect(result.ok).toBe(false)
@@ -211,7 +213,7 @@ describe('ChannelObject.startQuiz', () => {
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
 
-    const result = await channelObject('C1').startQuiz('C1', '', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+    const result = await channelObject('C1').startQuiz('C1', '', COUNTDOWN_ORIGIN)
 
     expect(result.ok).toBe(true)
     expect(result.text).toBe('Quiz started!')
@@ -222,13 +224,13 @@ describe('ChannelObject.startQuiz', () => {
     const firstOrigin = 'https://countdown.one.example.com'
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
-    await channelObject('C7A').startQuiz('C7A', '3 10s', firstOrigin, SLACK_BOT_TOKEN)
+    await channelObject('C7A').startQuiz('C7A', '3 10s', firstOrigin)
 
     // A trailing slash on the origin is tolerated.
     const secondOrigin = 'https://countdown.two.example.com/'
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
-    await channelObject('C7B').startQuiz('C7B', '3 10s', secondOrigin, SLACK_BOT_TOKEN)
+    await channelObject('C7B').startQuiz('C7B', '3 10s', secondOrigin)
 
     expect(postedBodies[0].blocks[2].elements[0].image_url).toBe(countdownUrl(firstOrigin, 10, 'q-1'))
     expect(postedBodies[1].blocks[2].elements[0].image_url).toBe(countdownUrl(secondOrigin, 10, 'q-1'))
@@ -237,11 +239,11 @@ describe('ChannelObject.startQuiz', () => {
   it('keeps quizzes isolated per channel', async () => {
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
-    const first = await channelObject('C8A').startQuiz('C8A', '3 10s', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+    const first = await channelObject('C8A').startQuiz('C8A', '3 10s', COUNTDOWN_ORIGIN)
 
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
-    const second = await channelObject('C8B').startQuiz('C8B', '3 10s', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+    const second = await channelObject('C8B').startQuiz('C8B', '3 10s', COUNTDOWN_ORIGIN)
 
     expect(first.ok).toBe(true)
     expect(first.messageTs).toBe(POST_MESSAGE_TS)
@@ -253,7 +255,7 @@ describe('ChannelObject.startQuiz', () => {
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()
 
-    const result = await channelObject('C1').startQuiz('C1', '2 10s', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+    const result = await channelObject('C1').startQuiz('C1', '2 10s', COUNTDOWN_ORIGIN)
 
     expect(result.ok).toBe(true)
     expect(result.messageTs).toBe(POST_MESSAGE_TS)

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { Schema } from 'effect'
 import {
   withId,
   shuffleAnswers,
@@ -6,9 +7,9 @@ import {
   isCorrectAnswer,
   getRemainingTime,
   hasExpired,
-  TIMEOUT_SECS,
-  type TriviaQuestion
+  TriviaQuestion
 } from '../src/trivia-core'
+import { TIMEOUT_SECS } from '../src/timing'
 
 describe('Utility Functions', () => {
   describe('withId', () => {
@@ -18,7 +19,7 @@ describe('Utility Functions', () => {
       
       expect(answer).toHaveProperty('id')
       expect(answer).toHaveProperty('text', text)
-      expect(typeof answer.id).toBe('string')
+      expect(answer.id).toEqual(expect.any(String))
       expect(answer.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
     })
 
@@ -48,16 +49,10 @@ describe('Utility Functions', () => {
 
 describe('Question Logic', () => {
   const mockApiQuestion: TriviaQuestion = {
-    category: 'Test',
     id: 'test-1',
     correctAnswer: 'Correct Answer',
     incorrectAnswers: ['Wrong1', 'Wrong2', 'Wrong3'],
-    question: { text: 'What is the test question?' },
-    tags: ['test'],
-    type: 'text_choice',
-    difficulty: 'easy',
-    regions: ['US'],
-    isNiche: false
+    question: { text: 'What is the test question?' }
   }
 
   describe('createQuestion', () => {
@@ -142,5 +137,50 @@ describe('Question Logic', () => {
       
       expect(hasExpired(question)).toBe(true)
     })
+  })
+})
+
+describe('TriviaQuestion', () => {
+  const decode = Schema.decodeUnknownSync(TriviaQuestion)
+
+  const payload = {
+    category: 'science',
+    id: '622a1c357cc59eab6f94fd8e',
+    correctAnswer: 'Mercury',
+    incorrectAnswers: ['Venus', 'Mars', 'Jupiter'],
+    question: { text: 'Which planet is closest to the Sun?' },
+    tags: ['space'],
+    type: 'text_choice',
+    difficulty: 'easy',
+    regions: [],
+    isNiche: false,
+  }
+
+  it('decodes a question as The Trivia API sends it, keeping what the app reads', () => {
+    expect(decode(payload)).toEqual({
+      id: '622a1c357cc59eab6f94fd8e',
+      correctAnswer: 'Mercury',
+      incorrectAnswers: ['Venus', 'Mars', 'Jupiter'],
+      question: { text: 'Which planet is closest to the Sun?' },
+    })
+  })
+
+  it('tolerates changes to fields the app never reads', () => {
+    const changed = {
+      ...payload,
+      category: undefined,
+      tags: null,
+      type: 'image_choice',
+      difficulty: 'impossible',
+      isNiche: 'sometimes',
+    }
+
+    expect(decode(changed)).toEqual(decode(payload))
+  })
+
+  it('rejects a payload it could not ask', () => {
+    expect(() => decode({ ...payload, incorrectAnswers: ['Venus', 'Mars'] })).toThrow(Schema.SchemaError)
+    expect(() => decode({ ...payload, question: 'Which planet?' })).toThrow(Schema.SchemaError)
+    expect(() => decode({ ...payload, correctAnswer: undefined })).toThrow(Schema.SchemaError)
   })
 })

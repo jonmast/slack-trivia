@@ -6,17 +6,19 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll } from "vitest"
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import type { TriviaQuestion } from '../../src/trivia-core'
 import { renderRecapModal } from '../../src/slack-ui'
 import {
   SlackRecorder,
   channelObject,
   createTriviaQuestions,
   interceptTrivia,
+  parseSlackResponse,
+  requestBodyText,
   slackRequest,
   waitForCalls,
   COUNTDOWN_ORIGIN,
-  SLACK_BOT_TOKEN,
+  type SlackResponse,
+  type TriviaApiQuestion,
 } from './fixtures'
 
 /**
@@ -36,7 +38,7 @@ const RESPONSE_URL_PATH = '/actions/T1/123/abc'
 const slack = new SlackRecorder()
 
 /** Questions whose text names the quiz, so a recap can only match one of them. */
-function questionsFor(label: string, count: number): TriviaQuestion[] {
+function questionsFor(label: string, count: number): TriviaApiQuestion[] {
   return createTriviaQuestions(count, label).map((question) => ({
     ...question,
     question: { text: `${label} question ${question.id}?` },
@@ -50,6 +52,7 @@ function recapButtonValue(blocks: any[]): string | undefined {
 /** The option the participant should click to be right. */
 function correctOption(postedBlocks: any[]): string {
   const options = postedBlocks[1].accessory.options
+
   return options.find((option: any) => option.text.text.startsWith('Correct')).value
 }
 
@@ -61,7 +64,7 @@ async function playQuiz(label: string): Promise<string> {
   const before = slack.calls.length
   interceptTrivia(questionsFor(label, 1))
   const stub = channelObject(CHANNEL)
-  const started = await stub.startQuiz(CHANNEL, '1 2s', COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+  const started = await stub.startQuiz(CHANNEL, '1 2s', COUNTDOWN_ORIGIN)
   expect(started.ok).toBe(true)
 
   const posted = slack.calls[before]
@@ -77,6 +80,7 @@ async function playQuiz(label: string): Promise<string> {
   const summary = slack.calls[before + 2]
   const messageTs = recapButtonValue(summary.blocks)
   expect(messageTs).toBeTruthy()
+
   return messageTs!
 }
 
@@ -106,7 +110,7 @@ function actionBody(userId: string, messageTs: string): string {
 type Opened = { trigger_id?: string; view?: any }
 
 let opened: Opened | undefined
-let replied: any
+let replied: SlackResponse | undefined
 
 /**
  * Capture whatever a Recap click produces. The interceptors persist for the
@@ -124,11 +128,12 @@ function interceptClicks(): void {
     .intercept({ path: '/api/views.open', method: 'POST' })
     .reply(200, (options) => {
       // The Workers Slack client posts form-encoded arguments.
-      const form = new URLSearchParams(options.body as string)
+      const form = new URLSearchParams(requestBodyText(options.body))
       opened = {
         trigger_id: form.get('trigger_id') ?? undefined,
         view: JSON.parse(form.get('view') ?? 'null'),
       }
+
       return { ok: true }
     })
     .persist()
@@ -136,7 +141,8 @@ function interceptClicks(): void {
     .get(RESPONSE_URL_ORIGIN)
     .intercept({ path: RESPONSE_URL_PATH, method: 'POST' })
     .reply(200, (options) => {
-      replied = JSON.parse(options.body as string)
+      replied = parseSlackResponse(options.body)
+
       return 'ok'
     })
     .persist()
@@ -147,13 +153,16 @@ async function clickRecap(userId: string, messageTs: string) {
   opened = undefined
   replied = undefined
   const ctx = createExecutionContext()
+
   const response = await worker.fetch(
     await slackRequest(SLACK_EVENTS_PATH, actionBody(userId, messageTs)),
     env,
     ctx,
   )
+
   expect(response.status).toBe(200)
   await waitOnExecutionContext(ctx)
+
   return { modal: () => opened, ephemeral: () => replied }
 }
 

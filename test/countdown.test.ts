@@ -10,6 +10,7 @@ describe('renderCountdownGif', () => {
     expect(Buffer.from(gif.subarray(0, 6)).toString('ascii')).toBe('GIF89a')
     // Graphic Control Extension marker 0x21 0xF9 precedes every frame: 5s * 4fps + final hold.
     let frames = 0
+
     for (let i = 0; i < gif.length - 1; i++) if (gif[i] === 0x21 && gif[i + 1] === 0xf9) frames++
     expect(frames).toBe(21)
     // No NETSCAPE2.0 loop block => plays once.
@@ -19,9 +20,12 @@ describe('renderCountdownGif', () => {
   it('shortens the animation by the lead time, floored at 1s', () => {
     const count = (gif: Uint8Array) => {
       let n = 0
+
       for (let i = 0; i < gif.length - 1; i++) if (gif[i] === 0x21 && gif[i + 1] === 0xf9) n++
+
       return n
     }
+
     expect(count(renderCountdownGif(10, 1))).toBe(count(renderCountdownGif(9)))
     expect(count(renderCountdownGif(1, 5))).toBe(count(renderCountdownGif(1)))
   })

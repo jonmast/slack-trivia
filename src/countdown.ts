@@ -20,6 +20,7 @@ const SIZE = 64
 const OUTER_R = SIZE / 2 - 1
 const FPS = 4
 const DELAY_MS = 1000 / FPS
+
 /** Hold on the final (empty) frame for a long time; the message gets replaced anyway. */
 const FINAL_HOLD_MS = 60_000
 
@@ -29,6 +30,7 @@ const TRACK = 1
 const GREEN = 2
 const AMBER = 3
 const RED = 4
+
 const PALETTE = [
   [0, 0, 0], // transparent slot
   [200, 200, 200], // drained track (reads on both light and dark themes)
@@ -36,11 +38,14 @@ const PALETTE = [
   [236, 178, 46],
   [224, 30, 90],
 ]
+
 const WEDGE = -1
 
 function colorFor(fraction: number): number {
   if (fraction > 0.5) return GREEN
+
   if (fraction > 0.2) return AMBER
+
   return RED
 }
 
@@ -53,9 +58,12 @@ function classify(x: number, y: number, fraction: number): number {
   const c = (SIZE - 1) / 2
   const dx = x - c
   const dy = y - c
+
   if (dx * dx + dy * dy > OUTER_R * OUTER_R) return TRANSPARENT
   let a = Math.atan2(dx, -dy) / (2 * Math.PI) // clockwise from 12 o'clock, [0, 1)
+
   if (a < 0) a += 1
+
   return a < fraction ? WEDGE : TRACK
 }
 
@@ -74,21 +82,26 @@ function drawFrame(fraction: number): Uint8Array {
     for (let x = 0; x < SIZE; x++) {
       // 2x2 supersample with majority vote to soften the wedge edge and rim.
       const votes = new Map<number, number>()
+
       for (const [ox, oy] of SUBSAMPLES) {
         const k = classify(x + ox, y + oy, fraction)
         votes.set(k, (votes.get(k) ?? 0) + 1)
       }
+
       let best = TRANSPARENT
       let bestN = 0
+
       for (const [k, n] of votes) {
         if (n > bestN) {
           best = k
           bestN = n
         }
       }
+
       px[y * SIZE + x] = best === WEDGE ? color : best
     }
   }
+
   return px
 }
 
@@ -112,7 +125,9 @@ export function renderCountdownGif(secs: number, leadSecs: number = 0): Uint8Arr
       transparentIndex: TRANSPARENT,
     })
   }
+
   gif.finish()
+
   return gif.bytes()
 }
 

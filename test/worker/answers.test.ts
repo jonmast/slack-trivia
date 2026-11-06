@@ -2,6 +2,7 @@ import {
   createExecutionContext,
   env,
   fetchMock,
+  runInDurableObject,
   waitOnExecutionContext,
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
@@ -16,7 +17,6 @@ import {
   sleep,
   waitForCalls,
   COUNTDOWN_ORIGIN,
-  SLACK_BOT_TOKEN,
 } from './fixtures'
 
 /**
@@ -35,15 +35,18 @@ const slack = new SlackRecorder()
 async function start(channelId: string, args: string, questionCount: number) {
   interceptTrivia(createTriviaQuestions(questionCount))
   const stub = channelObject(channelId)
-  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN, SLACK_BOT_TOKEN)
+  const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN)
   expect(result.ok).toBe(true)
+
   return stub
 }
 
 /** The answer IDs are generated per question, so they only exist in the blocks. */
 function optionValue(blocks: any[], text: string): string {
   const option = blocks[1].accessory.options.find((o: any) => o.text.text === text)
+
   if (!option) throw new Error(`No option ${text} in ${JSON.stringify(blocks[1].accessory.options)}`)
+
   return option.value
 }
 
@@ -54,20 +57,25 @@ function blockId(blocks: any[]): string {
 /** The `N. <@user>: P points · ⚡ B · a/b answered` lines of the final summary. */
 function finalLeaderboard(blocks: any[]): string[] {
   const text: string = blocks[1].text.text
+
   return text.split('\n').slice(1)
 }
 
 /** A final summary line split into its parts, for bonuses that depend on timing. */
 function parseEntry(line: string) {
   const match = /^(\d+)\. <@([^>]+)>: (\d+) points? · ⚡ (\d+\.\d\d) · (\d+\/\d+) answered$/.exec(line)
+
   if (!match) throw new Error(`Unexpected leaderboard line: ${line}`)
   const [, rank, userId, points, speedBonus, answered] = match
+
   return { rank: Number(rank), userId, points: Number(points), answered, speedBonus: Number(speedBonus) }
 }
 
 function frame(calls: { blocks: any[] }[], header: string): any[] {
   const call = calls.find((c) => headerText(c.blocks) === header)
+
   if (!call) throw new Error(`No frame ${header}`)
+
   return call.blocks
 }
 
@@ -80,20 +88,24 @@ async function sign(body: string, timestamp: string): Promise<string> {
     false,
     ['sign'],
   )
+
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
     new TextEncoder().encode(`v0:${timestamp}:${body}`),
   )
+
   const hex = [...new Uint8Array(signature)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+
   return `v0=${hex}`
 }
 
 /** A signed POST to the events endpoint, the shape Slack dispatches to. */
 async function slackRequest(body: string): Promise<Request> {
   const timestamp = Math.floor(Date.now() / 1000).toString()
+
   return new Request(`https://example.com${SLACK_EVENTS_PATH}`, {
     method: 'POST',
     headers: {
@@ -187,6 +199,47 @@ describe('recording answers', () => {
     ])
   })
 
+  it('times an answer whose click time did not parse by when it arrived', async () => {
+    const stub = await start('C-NAN-TIME', `1 ${WINDOW}`, 1)
+    const question = slack.calls[0].blocks
+
+    // Half the window has gone when the click arrives; the worker turns an
+    // unparsable `action_ts` into NaN.
+    await sleep(500)
+    await stub.submitAnswer('U-NAN', optionValue(question, 'Correct 1'), blockId(question), NaN)
+
+    await waitForCalls(slack, 3)
+    // The quiz ran to its summary, and the answer earned its point and the
+    // bonus for when it reached the object.
+    const [entry, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
+    expect(rest).toEqual([])
+    expect(entry).toMatchObject({ rank: 1, userId: 'U-NAN', points: 1, answered: '1/1' })
+    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 1)
+  })
+
+  it('records an answer synchronously, returning nothing to await', async () => {
+    const stub = await start('C-SYNC', `1 ${WINDOW}`, 1)
+    const question = slack.calls[0].blocks
+
+    // Wrapped so it is not awaited: a Promise here would mean something is
+    // awaited between the state change and its write.
+    const { returned } = await runInDurableObject(stub, (instance) => ({
+      returned: instance.submitAnswer(
+        'U-SYNC',
+        optionValue(question, 'Correct 1'),
+        blockId(question),
+        Date.now(),
+      ),
+    }))
+
+    expect(returned).toBeUndefined()
+
+    await waitForCalls(slack, 3)
+    expect(finalLeaderboard(slack.lastBlocks).map(parseEntry)).toMatchObject([
+      { userId: 'U-SYNC', points: 1 },
+    ])
+  })
+
   it('refunds the previous answer when a participant changes their mind', async () => {
     const stub = await start('C-CHANGE', `1 ${WINDOW}`, 1)
     const question = slack.calls[0].blocks
@@ -229,12 +282,13 @@ describe('recording answers', () => {
 
     // The channel is free, and the ignored answer did not leak into a new quiz.
     interceptTrivia(createTriviaQuestions(1))
+
     const restart = await channelObject('C-FINISHED').startQuiz(
       'C-FINISHED',
       `1 ${LONG_WINDOW}`,
       COUNTDOWN_ORIGIN,
-      SLACK_BOT_TOKEN,
     )
+
     expect(restart.ok).toBe(true)
   })
 
@@ -268,11 +322,13 @@ describe('recording answers', () => {
     })
 
     const ctx = createExecutionContext()
+
     const response = await worker.fetch(
       await slackRequest(new URLSearchParams({ payload }).toString()),
       env,
       ctx,
     )
+
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
 

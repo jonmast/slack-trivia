@@ -1,9 +1,9 @@
 import { env, fetchMock } from 'cloudflare:test'
+import { Schema } from 'effect'
 import type { TriviaQuestion } from '../../src/trivia-core'
 
 /** Shared plumbing for worker tests: the channel stub and the fake Slack/Trivia network. */
 
-export const SLACK_BOT_TOKEN = 'xoxb-test-token'
 export const COUNTDOWN_ORIGIN = 'https://example.com'
 export const POST_MESSAGE_TS = '1234567890.0001'
 
@@ -11,8 +11,21 @@ export function channelObject(channelId: string) {
   return env.CHANNEL_OBJECT.get(env.CHANNEL_OBJECT.idFromName(channelId))
 }
 
+/**
+ * A question as the Trivia API sends it: the fields the app reads, plus the
+ * ones decoding drops.
+ */
+export type TriviaApiQuestion = TriviaQuestion & {
+  category: string
+  tags: string[]
+  type: string
+  difficulty: string
+  regions: string[]
+  isNiche: boolean
+}
+
 /** Questions as the Trivia API returns them; ids are `q-1`, `q-2`, ... */
-export function createTriviaQuestions(count: number, prefix = 'q'): TriviaQuestion[] {
+export function createTriviaQuestions(count: number, prefix = 'q'): TriviaApiQuestion[] {
   return Array.from({ length: count }, (_, i) => ({
     category: 'Test',
     id: `${prefix}-${i + 1}`,
@@ -27,12 +40,68 @@ export function createTriviaQuestions(count: number, prefix = 'q'): TriviaQuesti
   }))
 }
 
-export type SlackCall = {
-  method: 'chat.postMessage' | 'chat.update'
+/** A `chat.postMessage` or `chat.update` body, as Slack receives it. */
+export type SlackMessageBody = {
   channel: string
-  ts?: string
   text: string
+  ts?: string
+  /** Left loose: tests reach deep into whichever block they check. */
   blocks: any[]
+}
+
+export type SlackCall = SlackMessageBody & {
+  method: 'chat.postMessage' | 'chat.update'
+}
+
+/** A reply the Worker posts to a command's or button's `response_url`. */
+export type SlackResponse = {
+  response_type?: string
+  text?: string
+}
+
+/** The bot token the test bindings configure, as every Web API call must carry it. */
+export const SLACK_AUTH_HEADERS = { authorization: 'Bearer xoxb-test-token' }
+
+/**
+ * The text of a request body captured by `fetchMock`. Whatever the Worker
+ * sent — Effect's HttpClient sends JSON as a `Uint8Array`, the Slack framework
+ * form-encodes — vitest-pool-workers buffers it and hands reply callbacks the
+ * decoded text; this fails if that ever changes.
+ */
+export function requestBodyText(body: BodyInit | undefined): string {
+  return Schema.decodeUnknownSync(Schema.String)(body)
+}
+
+const decodeSlackMessage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      channel: Schema.String,
+      text: Schema.String,
+      ts: Schema.optional(Schema.String),
+      blocks: Schema.Array(Schema.Unknown),
+    }),
+  ),
+)
+
+const decodeSlackResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      response_type: Schema.optional(Schema.String),
+      text: Schema.optional(Schema.String),
+    }),
+  ),
+)
+
+/** Parse the JSON body the Worker posts to `chat.postMessage`/`chat.update`. */
+export function parseSlackMessage(body: BodyInit | undefined): SlackMessageBody {
+  const message = decodeSlackMessage(requestBodyText(body))
+
+  return { ...message, blocks: [...message.blocks] }
+}
+
+/** Parse the reply the Worker posts to a `response_url`. */
+export function parseSlackResponse(body: BodyInit | undefined): SlackResponse {
+  return decodeSlackResponse(requestBodyText(body))
 }
 
 /**
@@ -71,29 +140,33 @@ export class SlackRecorder {
   install(): void {
     fetchMock
       .get('https://slack.com')
-      .intercept({ path: '/api/chat.postMessage', method: 'POST' })
+      .intercept({ path: '/api/chat.postMessage', method: 'POST', headers: SLACK_AUTH_HEADERS })
       .reply(200, (options) => {
-        const body = JSON.parse(options.body as string)
+        const body = parseSlackMessage(options.body)
         this.calls.push({ method: 'chat.postMessage', ...body })
         // Slack never reuses a timestamp; the first post gets POST_MESSAGE_TS.
         this.posted += 1
+
         return { ok: true, ts: this.posted === 1 ? POST_MESSAGE_TS : `1234567890.000${this.posted}` }
       })
       .persist()
 
     fetchMock
       .get('https://slack.com')
-      .intercept({ path: '/api/chat.update', method: 'POST' })
+      .intercept({ path: '/api/chat.update', method: 'POST', headers: SLACK_AUTH_HEADERS })
       .reply((options) => {
-        const body = JSON.parse(options.body as string)
+        const body = parseSlackMessage(options.body)
         const call: SlackCall = { method: 'chat.update', ...body }
         this.calls.push(call)
 
         const status = this.failHttp(call)
+
         if (status) {
           return { statusCode: status, data: 'rate limited' }
         }
+
         const error = this.failUpdate(call)
+
         return { statusCode: 200, data: error ? { ok: false, error } : { ok: true } }
       })
       .persist()
@@ -101,7 +174,7 @@ export class SlackRecorder {
 }
 
 /** One trivia fetch; the worker asks for `/v2/questions?limit=N`. */
-export function interceptTrivia(questions: TriviaQuestion[]): void {
+export function interceptTrivia(questions: TriviaApiQuestion[]): void {
   fetchMock
     .get('https://the-trivia-api.com')
     .intercept({ path: /^\/v2\/questions/, method: 'GET' })
@@ -117,6 +190,7 @@ export async function waitForCalls(
   timeoutMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
+
   while (recorder.calls.length < count) {
     if (Date.now() > deadline) {
       throw new Error(
@@ -124,6 +198,7 @@ export async function waitForCalls(
           recorder.calls.map((call) => call.text).join(' | '),
       )
     }
+
     await sleep(25)
   }
 }
@@ -137,14 +212,17 @@ export async function signSlackBody(body: string, timestamp: string): Promise<st
     false,
     ['sign'],
   )
+
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
     new TextEncoder().encode(`v0:${timestamp}:${body}`),
   )
+
   const hex = [...new Uint8Array(signature)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
+
   return `v0=${hex}`
 }
 
@@ -155,13 +233,16 @@ export async function slackRequest(
   signed = true,
 ): Promise<Request> {
   const timestamp = Math.floor(Date.now() / 1000).toString()
-  const headers: Record<string, string> = {
+
+  const headers = new Headers({
     'content-type': 'application/x-www-form-urlencoded',
-  }
+  })
+
   if (signed) {
-    headers['x-slack-request-timestamp'] = timestamp
-    headers['x-slack-signature'] = await signSlackBody(body, timestamp)
+    headers.set('x-slack-request-timestamp', timestamp)
+    headers.set('x-slack-signature', await signSlackBody(body, timestamp))
   }
+
   return new Request(`${COUNTDOWN_ORIGIN}${path}`, { method: 'POST', headers, body })
 }
 

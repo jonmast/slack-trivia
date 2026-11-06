@@ -19,7 +19,7 @@ pnpm test
 ## Projects
 
 - **node** (`test/*.test.ts`) — the pure modules shared by the Worker and the build script, in a plain Node environment:
-  - `trivia-core.test.ts` — answers, shuffling, question construction and question timing helpers.
+  - `trivia-core.test.ts` — answers, shuffling, question construction, question timing helpers and the Trivia API question schema.
   - `quiz-rules.test.ts` — `/quizzo` argument parsing and the `Quiz` answer/scoring rules.
   - `multiplayer.test.ts` — several participants scoring in one quiz.
   - `quiz-snapshot.test.ts` — `Quiz` snapshot round-trips, the format the Durable Object stores.
@@ -30,6 +30,7 @@ pnpm test
 
 - **worker** (`test/worker/**/*.test.ts`) — the Cloudflare Worker on the real Workers runtime under `@cloudflare/vitest-pool-workers`:
   - `channel-object.test.ts` — the `ChannelObject` Durable Object's channel bookkeeping and storage behaviour.
+  - `quiz-record.test.ts` — stored quiz rows in the shape earlier releases wrote still decode and rebuild.
   - `start-quiz.test.ts` — `/quizzo` starting a quiz, question fetching, and refusal while one is running.
   - `answers.test.ts` — answer recording, changing an answer, and late answers.
   - `alarm-progression.test.ts` — alarm-driven question/results/complete progression, restart and duplicate-alarm behaviour.
@@ -47,6 +48,7 @@ Alarms are really scheduled, so the runtime delivers most of them itself and the
 ## Conventions
 
 - Worker tests reach the Durable Object through its namespace binding and assert on what Slack would receive, not on storage rows.
+- The `chat.*` interceptors match only requests carrying the test bot token, so a token that never reaches the Slack client fails the tests.
 - External dependencies are faked at the network boundary: outbound `fetch` to Slack and The Trivia API is intercepted with `fetchMock` with net connect disabled, so an unmocked request fails the test rather than reaching the network.
 - The countdown GIFs the worker tests fetch are build output, not fixtures: `pretest:run` and `pretest:worker` render them into `public/countdown/` first, so the tests read the same bytes a deploy would upload.
 - Worker tests are isolated from local env files. Wrangler otherwise loads a `.env` from the repo root as dev vars, so the developer's real Slack credentials in that file would reach the worker under test: any key the test config does not happen to override arrives untouched, and `SLACK_APP_TOKEN` alone turns on Socket Mode, which skips signature verification and makes live Slack calls with a real token. So `vitest.config.ts` sets `CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false` and the worker project takes its Slack credentials from `miniflare.bindings` alone; a test asserts those fake values so a regression fails instead of leaking.
