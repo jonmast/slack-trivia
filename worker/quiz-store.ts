@@ -8,10 +8,11 @@ export class ChannelStorage extends Context.Service<
 >()("slack-trivia/worker/ChannelStorage") {}
 
 /**
- * Where a quiz is in its cycle. A `question` phase ends at the answer window's
- * deadline, a `results` phase that many seconds later; `complete` sets no alarm.
+ * Where a quiz is in its cycle. A `ready` phase ends when the first question
+ * is due, a `question` phase at the answer window's deadline, a `results`
+ * phase that many seconds later; `complete` sets no alarm.
  */
-const Phase = Schema.Literals(["question", "results", "complete"]);
+const Phase = Schema.Literals(["ready", "question", "results", "complete"]);
 
 /**
  * The `state` column: the quiz snapshot plus what only the channel object

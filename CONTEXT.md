@@ -19,6 +19,10 @@ One multiple-choice prompt with four options, exactly one of which is correct, w
 The seconds from a question being posted during which an answer earns a speed bonus. It is soft: an answer arriving after it still counts for the base point, with no bonus, at any time until the quiz is finished, so Slack delivery lag never costs a participant their answer. Its end is also the absolute deadline the channel object sets an alarm for; when that alarm fires, results replace the question.
 _Avoid_: deadline, cutoff, timeout
 
+**Ready screen**:
+The screen a channel quiz opens on: how many questions there will be and how long each one lasts, with a countdown to the first question so participants can gather before it appears. Nothing can be answered while it is up.
+_Avoid_: lobby, wait screen, intro
+
 **Results**:
 The screen shown after a question closes: the correct answer plus the current leaderboard.
 _Avoid_: reveal, answer screen

@@ -8,9 +8,9 @@ The bot runs entirely on Cloudflare Workers. There is no Node server and no Dock
 
 - `worker/index.ts` — the Worker entry point. It verifies Slack requests and handles them on `/slack/events` via `slack-cloudflare-workers` (HTTP request URL only; no Bolt, no Socket Mode).
 - `worker/channel-object.ts` — the SQLite-backed `ChannelObject` Durable Object, one per Slack channel, bound as `CHANNEL_OBJECT`. It builds the channel's Effect services from its bindings and runs one program per RPC method and alarm. A quiz in progress survives deploys, crashes and idle eviction.
-- `worker/channel-quiz.ts` — those programs: starting a quiz, recording answers, serving recaps and the alarm-driven question/results/complete transitions.
+- `worker/channel-quiz.ts` — those programs: starting a quiz, recording answers, serving recaps and the alarm-driven ready/question/results/complete transitions.
 - `worker/quiz-store.ts` (the object's SQLite tables, stored quiz rows and alarm), `slack-client.ts` (`chat.postMessage`/`chat.update`), `trivia-api.ts` (question fetching), `config.ts` (settings read from bindings) and `logger.ts` (JSON log lines for Workers Logs) — the services those programs run against.
-- `src/` — modules shared by the Worker and the build script: `trivia-core.ts` (the `Quiz` class, scoring, `/quizzo` argument parsing, the snapshot schema), `slack-ui.ts` (the channel renderers and recap modal), `countdown.ts` (the countdown GIF renderer) and `timing.ts` (answer-window and results durations).
+- `src/` — modules shared by the Worker and the build script: `trivia-core.ts` (the `Quiz` class, scoring, `/quizzo` argument parsing, the snapshot schema), `slack-ui.ts` (the channel renderers and recap modal), `countdown.ts` (the countdown GIF renderer) and `timing.ts` (answer-window, ready screen and results durations).
 - `public/` — static assets served through the `ASSETS` binding. `public/countdown/` is build output and is gitignored.
 - `wrangler.jsonc` — Worker, Durable Object and asset configuration.
 
@@ -18,7 +18,7 @@ Why Durable Objects: see `docs/adr/0001-cloudflare-durable-objects.md`. Why Effe
 
 ## Countdown GIFs
 
-Each question and results frame carries an animated countdown pie. The GIFs are pre-rendered by `pnpm build:assets` into `public/countdown/<secs>.gif` — one per answer window from 1s to the maximum, plus the results duration — and served from the Worker's own origin, so nothing is generated at request time and no separate image host is needed. `pnpm dev`, `pnpm run deploy` and the test scripts render them first.
+Each ready, question and results frame carries an animated countdown pie. The GIFs are pre-rendered by `pnpm build:assets` into `public/countdown/<secs>.gif` — one per answer window from 1s to the maximum, plus the ready screen and results durations — and served from the Worker's own origin, so nothing is generated at request time and no separate image host is needed. `pnpm dev`, `pnpm run deploy` and the test scripts render them first.
 
 ## Local development
 

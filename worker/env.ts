@@ -9,4 +9,6 @@ export type Env = SlackEdgeAppEnv & {
    * production; tests shorten it so a whole quiz runs in a few seconds.
    */
   RESULTS_SECS?: string;
+  /** How long the ready screen stays up, in seconds; shortened like `RESULTS_SECS`. */
+  READY_SECS?: string;
 };

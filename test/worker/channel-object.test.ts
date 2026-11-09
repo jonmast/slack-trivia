@@ -33,7 +33,7 @@ describe('ChannelObject.startQuiz', () => {
 
   afterEach(() => fetchMock.assertNoPendingInterceptors())
 
-  it('parses args, posts the first question, and stores a running quiz', async () => {
+  it('parses args, posts the ready screen, and stores a running quiz', async () => {
     interceptTrivia(createTriviaQuestions(3))
     const getBody = interceptPostMessage(POST_MESSAGE_TS)
 
@@ -49,19 +49,17 @@ describe('ChannelObject.startQuiz', () => {
     expect(Array.isArray(body.blocks)).toBe(true)
     const blocks = body.blocks
     expect(blocks).toHaveLength(3)
-    // Header: Question 1/3:
+    // Header: the ready screen, not a question
     expect(blocks[0].type).toBe('header')
-    expect(blocks[0].text.text).toBe('Question 1/3:')
-    // Section: radio buttons with question ID as block_id
+    expect(blocks[0].text.text).toBe('Get ready!')
+    // Section: what the quiz will be, and nothing to answer yet
     expect(blocks[1].type).toBe('section')
-    expect(blocks[1].block_id).toBe('q-1')
-    expect(blocks[1].accessory.type).toBe('radio_buttons')
-    expect(blocks[1].accessory.action_id).toBe('radio_sel')
-    expect(blocks[1].accessory.options).toHaveLength(4)
-    // Context: countdown GIF derived from origin
+    expect(blocks[1].text.text).toContain('3 questions, 10 seconds each')
+    expect(blocks[1].accessory).toBeUndefined()
+    // Context: countdown to the first question, derived from origin
     expect(blocks[2].type).toBe('context')
     expect(blocks[2].elements[0].type).toBe('image')
-    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/example\.com\/countdown\/10\.gif\?q=/)
+    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/example\.com\/countdown\/1\.gif\?q=/)
   })
 
   it('defaults to 3 questions and 5s when no args are given', async () => {
@@ -73,9 +71,7 @@ describe('ChannelObject.startQuiz', () => {
     expect(result.ok).toBe(true)
     const body = getBody()!
     const blocks = body.blocks
-    expect(blocks[0].text.text).toBe('Question 1/3:')
-    // Default 5s countdown
-    expect(blocks[2].elements[0].image_url).toMatch(/countdown\/5\.gif/)
+    expect(blocks[1].text.text).toContain('3 questions, 5 seconds each')
   })
 
   it('returns the parse error for bad arguments', async () => {
@@ -135,7 +131,7 @@ describe('ChannelObject.startQuiz', () => {
 
     const body = getBody()!
     const blocks = body.blocks
-    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/trivia\.app\/countdown\/5\.gif/)
+    expect(blocks[2].elements[0].image_url).toMatch(/^https:\/\/trivia\.app\/countdown\/1\.gif/)
   })
 
   it('isolates quizzes across channels', async () => {

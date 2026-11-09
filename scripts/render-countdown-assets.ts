@@ -5,7 +5,7 @@
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderCountdownGif, COUNTDOWN_LEAD_SECS } from "../src/countdown";
-import { MAX_TIMEOUT_SECS, RESULTS_SECS } from "../src/timing";
+import { MAX_TIMEOUT_SECS, READY_SECS, RESULTS_SECS } from "../src/timing";
 
 const outDir = join(__dirname, "..", "public", "countdown");
 
@@ -20,6 +20,8 @@ const durations = new Set<number>();
 for (let secs = 1; secs <= MAX_TIMEOUT_SECS; secs++) durations.add(secs);
 
 durations.add(RESULTS_SECS);
+
+durations.add(READY_SECS);
 
 let totalBytes = 0;
 

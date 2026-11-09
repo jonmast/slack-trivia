@@ -37,6 +37,8 @@ async function start(channelId: string, args: string, questionCount: number) {
   const stub = channelObject(channelId)
   const result = await stub.startQuiz(channelId, args, COUNTDOWN_ORIGIN)
   expect(result.ok).toBe(true)
+  // The ready screen, then the first question, which is what gets answered.
+  await waitForCalls(slack, 2)
 
   return stub
 }
@@ -138,14 +140,14 @@ describe('recording answers', () => {
 
   it('scores a correct answer with a speed bonus, larger the faster it came', async () => {
     const stub = await start('C-ANSWER', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
     const correct = optionValue(question, 'Correct 1')
     const now = Date.now()
 
     await stub.submitAnswer('U-FAST', correct, blockId(question), now)
     await stub.submitAnswer('U-SLOW', correct, blockId(question), now + 500)
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     // Both earn the base point; the faster click earns the bigger bonus, so it
     // wins the tie and leads the board.
     const [fast, slow, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
@@ -164,7 +166,7 @@ describe('recording answers', () => {
 
   it('still awards the base point for an answer after the answer window', async () => {
     const stub = await start('C-LATE-ANSWER', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
 
     // Ten seconds into a one-second window: the bonus floors at zero rather
     // than going negative, and Slack delivery lag costs nothing else.
@@ -175,7 +177,7 @@ describe('recording answers', () => {
       Date.now() + 10_000,
     )
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
       '1. <@U-LAGGED>: 1 point · ⚡ 0.00 · 1/1 answered',
     ])
@@ -183,15 +185,15 @@ describe('recording answers', () => {
 
   it('credits an answer to the question its block named, not the current one', async () => {
     const stub = await start('C-PRIOR', `2 ${WINDOW}`, 2)
-    const question1 = slack.calls[0].blocks
+    const question1 = slack.calls[1].blocks
     const correct1 = optionValue(question1, 'Correct 1')
 
     // Wait until the quiz has moved on, then deliver the click for question 1.
-    await waitForCalls(slack, 3)
-    expect(headerText(slack.calls[2].blocks)).toBe('Question 2/2:')
+    await waitForCalls(slack, 4)
+    expect(headerText(slack.calls[3].blocks)).toBe('Question 2/2:')
     await stub.submitAnswer('U-LATE', correct1, blockId(question1), Date.now())
 
-    await waitForCalls(slack, 5)
+    await waitForCalls(slack, 6)
     // Credited to question 1, where that answer ID is correct; had it landed on
     // question 2 it would have matched nothing and scored zero.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
@@ -201,14 +203,14 @@ describe('recording answers', () => {
 
   it('times an answer whose click time did not parse by when it arrived', async () => {
     const stub = await start('C-NAN-TIME', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
 
     // Half the window has gone when the click arrives; the worker turns an
     // unparsable `action_ts` into NaN.
     await sleep(500)
     await stub.submitAnswer('U-NAN', optionValue(question, 'Correct 1'), blockId(question), NaN)
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     // The quiz ran to its summary, and the answer earned its point and the
     // bonus for when it reached the object.
     const [entry, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
@@ -219,7 +221,7 @@ describe('recording answers', () => {
 
   it('records an answer synchronously, returning nothing to await', async () => {
     const stub = await start('C-SYNC', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
 
     // Wrapped so it is not awaited: a Promise here would mean something is
     // awaited between the state change and its write.
@@ -234,7 +236,7 @@ describe('recording answers', () => {
 
     expect(returned).toBeUndefined()
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     expect(finalLeaderboard(slack.lastBlocks).map(parseEntry)).toMatchObject([
       { userId: 'U-SYNC', points: 1 },
     ])
@@ -242,13 +244,13 @@ describe('recording answers', () => {
 
   it('refunds the previous answer when a participant changes their mind', async () => {
     const stub = await start('C-CHANGE', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
     const now = Date.now()
 
     await stub.submitAnswer('U-FICKLE', optionValue(question, 'Correct 1'), blockId(question), now)
     await stub.submitAnswer('U-FICKLE', optionValue(question, 'W1-1'), blockId(question), now)
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     // Only the final choice counts: the point and bonus from the first pick are
     // refunded, and the change is not a second answer.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
@@ -258,9 +260,9 @@ describe('recording answers', () => {
 
   it('ignores and logs an answer that arrives after the quiz has finished', async () => {
     const stub = await start('C-FINISHED', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     const summaryBefore = slack.lastBlocks
     const log = vi.spyOn(console, 'log')
 
@@ -277,7 +279,7 @@ describe('recording answers', () => {
 
     // Nothing was re-rendered, and the last leaderboard Slack saw still has no
     // participants.
-    expect(slack.calls).toHaveLength(3)
+    expect(slack.calls).toHaveLength(4)
     expect(finalLeaderboard(summaryBefore)).toEqual(['No participants'])
 
     // The channel is free, and the ignored answer did not leak into a new quiz.
@@ -294,7 +296,7 @@ describe('recording answers', () => {
 
   it('records an answer dispatched as a signed Slack block_actions request', async () => {
     await start('C-DISPATCH', `1 ${WINDOW}`, 1)
-    const question = slack.calls[0].blocks
+    const question = slack.calls[1].blocks
 
     // Authorizing the incoming request calls Slack's auth.test itself; the
     // recorder's chat.* interceptors already cover everything else.
@@ -332,7 +334,7 @@ describe('recording answers', () => {
     expect(response.status).toBe(200)
     await waitOnExecutionContext(ctx)
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     // Stamped moments after the question went up, the click earns the base
     // point plus the near-max speed bonus.
     const [clicker, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)

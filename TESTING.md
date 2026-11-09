@@ -24,7 +24,7 @@ pnpm test
   - `multiplayer.test.ts` — several participants scoring in one quiz.
   - `quiz-snapshot.test.ts` — `Quiz` snapshot round-trips, the format the Durable Object stores.
   - `recap.test.ts` — `Quiz.getRecap` plus the recap modal and final summary renderers.
-  - `slack-ui.test.ts`, `channel-ui.test.ts` — the channel question, results and summary blocks.
+  - `slack-ui.test.ts`, `channel-ui.test.ts` — the channel ready screen, question, results and summary blocks.
   - `countdown.test.ts` — the countdown GIF renderer and its URL helper, still used by `pnpm build:assets`.
   - `test-utils.ts` is shared helper code, not a test file.
 
@@ -33,7 +33,7 @@ pnpm test
   - `quiz-record.test.ts` — stored quiz rows in the shape earlier releases wrote still decode and rebuild.
   - `start-quiz.test.ts` — `/quizzo` starting a quiz, question fetching, and refusal while one is running.
   - `answers.test.ts` — answer recording, changing an answer, and late answers.
-  - `alarm-progression.test.ts` — alarm-driven question/results/complete progression, restart and duplicate-alarm behaviour.
+  - `alarm-progression.test.ts` — alarm-driven ready/question/results/complete progression, restart and duplicate-alarm behaviour.
   - `recap.test.ts` — the Recap button's modal, including recaps from older summaries.
   - `slack-request.test.ts` — signature verification, the `/quizzo` acknowledgement and the `response_url` reply.
   - `countdown-assets.test.ts` — the pre-rendered countdown GIFs served through the `ASSETS` binding.
@@ -41,7 +41,7 @@ pnpm test
 
 ## Alarm-driven tests
 
-`test/worker/alarm-progression.test.ts` runs quizzes with one-second answer windows and a one-second results window (`RESULTS_SECS` is a worker test binding; production uses five seconds), so a whole quiz plays out in a few seconds of real time.
+`test/worker/alarm-progression.test.ts` runs quizzes with one-second answer windows, a one-second ready screen and a one-second results window (`READY_SECS` and `RESULTS_SECS` are worker test bindings; production uses ten and five seconds), so a whole quiz plays out in a few seconds of real time.
 
 Alarms are really scheduled, so the runtime delivers most of them itself and the tests just wait for the Slack calls to arrive. Deliveries the platform would never make are driven by hand through `runInDurableObject`: a duplicate alarm calls `alarm()` again, and a late wake deletes the scheduled alarm, lets the deadline pass unattended, then calls `alarm()`. The restart test aborts the instance with `state.abort()` and re-fetches the stub, so the quiz continues on an object rebuilt from storage alone.
 

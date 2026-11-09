@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderChannelQuestion, renderChannelResults } from '../src/slack-ui'
+import { renderChannelQuestion, renderChannelReady, renderChannelResults } from '../src/slack-ui'
 import {
   blockText,
   createMockTriviaQuestion,
@@ -65,6 +65,30 @@ describe('Channel UI Components', () => {
           { type: 'mrkdwn', text: '⏱ 15 seconds' },
         ],
       })
+    })
+  })
+
+  describe('renderChannelReady', () => {
+    it('should say what the quiz will be and count down to the first question', () => {
+      const blocks = renderChannelReady(5, 20, 10, GIF_URL)
+
+      expect(blocks).toHaveLength(3)
+      expect(blockText(findBlock(blocks, 'header'))).toBe('Get ready!')
+      expect(blockText(findBlock(blocks, 'section'))).toContain('5 questions, 20 seconds each')
+      expect(blocks[2]).toEqual({
+        type: 'context',
+        elements: [
+          { type: 'image', image_url: GIF_URL, alt_text: '10 second countdown' },
+          { type: 'mrkdwn', text: '⏭️ First question in 10 seconds' },
+        ],
+      })
+    })
+
+    it('should offer nothing to answer yet', () => {
+      const blocks = renderChannelReady(1, 1, 10, GIF_URL)
+
+      expect(blockText(findBlock(blocks, 'section'))).toContain('1 question, 1 second each')
+      expect(JSON.stringify(blocks)).not.toContain('radio_buttons')
     })
   })
 

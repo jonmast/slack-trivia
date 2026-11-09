@@ -20,6 +20,38 @@ export function optionLabel(text: string): string {
 }
 
 /**
+ * The ready screen a channel quiz opens on, so participants can gather before
+ * the first question. Its countdown pie runs out when that question appears.
+ */
+export function renderChannelReady(
+  totalQuestions: number,
+  timeoutSecs: number,
+  readySecs: number,
+  countdownGifUrl: string,
+): AnyMessageBlock[] {
+  return [
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Get ready!" },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `🧠 *Trivia time!*\n\n${plural(totalQuestions, "question", "questions")}, ${plural(timeoutSecs, "second", "seconds")} each. Answer fast for a speed bonus.`,
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        { type: "image", image_url: countdownGifUrl, alt_text: `${readySecs} second countdown` },
+        { type: "mrkdwn", text: `⏭️ First question in ${readySecs} seconds` },
+      ],
+    },
+  ]
+}
+
+/**
  * Channel question message. The timer is an animated pie GIF in a context
  * row: the message is rendered once when the question opens and never edited
  * until time's up (any edit would restart the animation).

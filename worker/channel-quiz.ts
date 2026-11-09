@@ -8,6 +8,7 @@ import {
 } from "../src/trivia-core";
 import {
   renderChannelQuestion,
+  renderChannelReady,
   renderChannelResults,
   renderFinalSummary,
 } from "../src/slack-ui";
@@ -50,7 +51,7 @@ class NoCurrentQuestionError extends Schema.TaggedError<NoCurrentQuestionError>(
 const NOT_ENOUGH_QUESTIONS =
   "Could not load enough trivia questions. Please try again shortly.";
 
-const POST_FAILED = "Failed to post the first question. Please try again.";
+const POST_FAILED = "Failed to post the quiz. Please try again.";
 
 /** Hands out already-fetched questions in order, consuming the queue. */
 function questionSource(queue: TriviaQuestion[]): QuestionSource {
@@ -67,8 +68,9 @@ function restore(record: QuizRecord, pending: TriviaQuestion[]) {
 /**
  * Start a channel quiz. Parses `/quizzo` arguments, fetches the requested
  * number of questions from The Trivia API in a single request, posts the
- * first question via `chat.postMessage`, and stores the running quiz in
- * SQLite before returning.
+ * ready screen via `chat.postMessage`, and stores the quiz, running but with
+ * no question asked yet, in SQLite before returning. The alarm that ends the
+ * ready screen asks the first question.
  */
 export const startQuiz = Effect.fn("startQuiz")(
   function* (channelId: string, text: string, origin: string) {
@@ -90,29 +92,28 @@ export const startQuiz = Effect.fn("startQuiz")(
 
     const queue = [...fetched];
     const quiz = new Quiz(questionSource(queue), numQuestions, timeoutSecs);
+    const { readySecs } = yield* WorkerConfig;
+
     // The queue holds at least `numQuestions` (>= 1) questions, so the first
-    // one is always there.
-    const question = yield* Effect.orDie(quiz.startQuiz());
-    const gifUrl = countdownGifUrl(origin, timeoutSecs, question.question.id);
+    // one is always there to key the GIF on.
+    const gifUrl = countdownGifUrl(origin, readySecs, `${queue[0].id}-ready`);
 
     const messageTs = yield* (yield* SlackClient).postMessage(
       channelId,
-      renderChannelQuestion(question, timeoutSecs, 1, numQuestions, gifUrl),
-      `Question 1/${numQuestions}: ${question.question.question.text}`,
+      renderChannelReady(numQuestions, timeoutSecs, readySecs, gifUrl),
+      `Trivia is starting: first question in ${readySecs} seconds`,
     );
 
-    // The clock starts now, after the post round-trip, so the speed bonus and
-    // the countdown GIF match what Slack shows rather than when we asked.
-    const now = yield* Clock.currentTimeMillis;
-    const deadline = now + timeoutSecs * 1000;
-    question.timestamp = new Date(now);
+    // Counted from after the post round-trip, like every other phase, so the
+    // countdown GIF matches what Slack shows.
+    const deadline = (yield* Clock.currentTimeMillis) + readySecs * 1000;
 
     yield* store.insertRunning(messageTs, {
       ...quiz.toSnapshot(),
-      phase: "question",
+      phase: "ready",
       deadline,
-      // Whatever `quiz.startQuiz()` did not take is what later questions come
-      // from: a restarted object has no other source for them.
+      // Every question waits here until it is asked: a restarted object has no
+      // other source for them.
       pending: queue,
       origin,
     });
@@ -137,7 +138,7 @@ function refuse(text: string): StartQuizResult {
 }
 
 function postFailed(error: SlackRequestError | SlackApiError) {
-  return Effect.logError("Failed to post the first question:", error).pipe(
+  return Effect.logError("Failed to post the ready screen:", error).pipe(
     Effect.as(refuse(POST_FAILED)),
   );
 }
@@ -293,7 +294,10 @@ const showResults = Effect.fn("showResults")(function* (
   yield* store.setAlarm(deadline);
 });
 
-/** Replace the results with the next question; fails when the quiz is done. */
+/**
+ * Replace the ready screen with the first question, or the results with the
+ * next one; fails when the quiz is done.
+ */
 const advance = Effect.fn("advance")(function* (
   messageTs: string,
   record: QuizRecord,
@@ -301,7 +305,11 @@ const advance = Effect.fn("advance")(function* (
   const store = yield* QuizStore;
   const pending = [...record.pending];
   const quiz = yield* restore(record, pending);
-  const question = yield* quiz.nextQuestion();
+
+  const question = yield* record.phase === "ready"
+    ? quiz.startQuiz()
+    : quiz.nextQuestion();
+
   const { current, total } = quiz.getProgress();
 
   const gifUrl = countdownGifUrl(
@@ -434,7 +442,7 @@ export const alarm: Effect.Effect<
 
   const transition = Match.value(record.phase).pipe(
     Match.when("question", () => showResults(messageTs, record)),
-    Match.when("results", () =>
+    Match.whenOr("ready", "results", () =>
       advance(messageTs, record).pipe(
         Effect.catchTag("QuizCompleteError", () =>
           complete(messageTs, record),

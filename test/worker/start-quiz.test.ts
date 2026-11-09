@@ -13,7 +13,7 @@ import {
 
 /**
  * Issue #8: `/quizzo` starts a quiz — the ChannelObject fetches trivia
- * questions and durably posts the first question to the channel. These tests
+ * questions and durably posts the ready screen to the channel. These tests
  * drive `ChannelObject.startQuiz()` over RPC and assert on what Slack
  * receives. (The `/quizzo` handler wiring itself lives in
  * slack-request.test.ts.)
@@ -44,14 +44,18 @@ function countdownUrl(origin: string, secs: number, questionId: string): string 
   return `${origin.replace(/\/$/, '')}/countdown/${secs}.gif?q=${questionId}`
 }
 
+/** Matches the `READY_SECS` worker test binding in vitest.config.ts. */
+const READY_SECS = 1
+
 /**
- * Assert the first-question channel message (`renderChannelQuestion` output):
- * progress header, question section with `radio_sel` buttons, and the
- * countdown context row.
+ * Assert the ready screen a quiz opens on (`renderChannelReady` output): a
+ * header, what the quiz will be, and the countdown to the first question.
+ * The first question itself replaces it on the ready alarm; see
+ * alarm-progression.test.ts.
  */
-function expectFirstQuestionBlocks(
+function expectReadyBlocks(
   blocks: any[],
-  questionId: string,
+  firstQuestionId: string,
   origin: string,
   timeoutSecs: number,
 ): void {
@@ -59,34 +63,26 @@ function expectFirstQuestionBlocks(
 
   expect(blocks[0]).toEqual({
     type: 'header',
-    text: { type: 'plain_text', text: 'Question 1/3:' },
+    text: { type: 'plain_text', text: 'Get ready!' },
   })
 
-  expect(blocks[1]).toMatchObject({
-    block_id: questionId,
+  expect(blocks[1]).toEqual({
     type: 'section',
-    text: { type: 'mrkdwn', text: '🧠 *Trivia Question*\n\n*Question 1?*' },
-    accessory: { type: 'radio_buttons', action_id: 'radio_sel' },
+    text: {
+      type: 'mrkdwn',
+      text: `🧠 *Trivia time!*\n\n3 questions, ${timeoutSecs} seconds each. Answer fast for a speed bonus.`,
+    },
   })
-
-  const options: any[] = blocks[1].accessory.options
-  expect(options).toHaveLength(4)
-  expect(options.map((option) => option.text.text).sort()).toEqual(['Correct 1', 'W1-1', 'W2-1', 'W3-1'])
-  expect(new Set(options.map((option) => option.value)).size).toBe(4)
-
-  for (const option of options) {
-    expect(option.text).toMatchObject({ type: 'plain_text' })
-  }
 
   expect(blocks[2]).toEqual({
     type: 'context',
     elements: [
       {
         type: 'image',
-        image_url: countdownUrl(origin, timeoutSecs, questionId),
-        alt_text: `${timeoutSecs} second countdown`,
+        image_url: countdownUrl(origin, READY_SECS, `${firstQuestionId}-ready`),
+        alt_text: `${READY_SECS} second countdown`,
       },
-      { type: 'mrkdwn', text: `⏱ ${timeoutSecs} seconds` },
+      { type: 'mrkdwn', text: `⏭️ First question in ${READY_SECS} seconds` },
     ],
   })
 }
@@ -107,7 +103,7 @@ describe('ChannelObject.startQuiz', () => {
     fetchMock.assertNoPendingInterceptors()
   })
 
-  it('starts a quiz and posts the first question', async () => {
+  it('starts a quiz and posts the ready screen', async () => {
     const questions = createTriviaQuestions(3)
     interceptTrivia(questions)
     interceptPostMessage()
@@ -125,7 +121,7 @@ describe('ChannelObject.startQuiz', () => {
     const posted = postedBodies[0]
     expect(posted).toBeDefined()
     expect(posted.channel).toBe('C1')
-    expectFirstQuestionBlocks(posted.blocks, questions[0].id, COUNTDOWN_ORIGIN, 10)
+    expectReadyBlocks(posted.blocks, questions[0].id, COUNTDOWN_ORIGIN, 10)
   })
 
   it('refuses a second quiz while one is running in the channel', async () => {
@@ -217,7 +213,7 @@ describe('ChannelObject.startQuiz', () => {
 
     expect(result.ok).toBe(true)
     expect(result.text).toBe('Quiz started!')
-    expectFirstQuestionBlocks(postedBodies[0].blocks, 'q-1', COUNTDOWN_ORIGIN, 5)
+    expectReadyBlocks(postedBodies[0].blocks, 'q-1', COUNTDOWN_ORIGIN, 5)
   })
 
   it('derives the countdown URL from the origin argument', async () => {
@@ -232,8 +228,12 @@ describe('ChannelObject.startQuiz', () => {
     interceptPostMessage()
     await channelObject('C7B').startQuiz('C7B', '3 10s', secondOrigin)
 
-    expect(postedBodies[0].blocks[2].elements[0].image_url).toBe(countdownUrl(firstOrigin, 10, 'q-1'))
-    expect(postedBodies[1].blocks[2].elements[0].image_url).toBe(countdownUrl(secondOrigin, 10, 'q-1'))
+    expect(postedBodies[0].blocks[2].elements[0].image_url).toBe(
+      countdownUrl(firstOrigin, READY_SECS, 'q-1-ready'),
+    )
+    expect(postedBodies[1].blocks[2].elements[0].image_url).toBe(
+      countdownUrl(secondOrigin, READY_SECS, 'q-1-ready'),
+    )
   })
 
   it('keeps quizzes isolated per channel', async () => {

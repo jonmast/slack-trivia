@@ -2,7 +2,7 @@ import { fetchMock, runDurableObjectAlarm, runInDurableObject } from 'cloudflare
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import type { ChannelObject } from '../../worker/channel-object'
 import type { Question, TriviaQuestion } from '../../src/trivia-core'
-import { renderChannelResults, renderFinalSummary } from '../../src/slack-ui'
+import { renderChannelReady, renderChannelResults, renderFinalSummary } from '../../src/slack-ui'
 import { countdownGifUrl } from '../../src/countdown'
 import {
   SlackRecorder,
@@ -19,9 +19,10 @@ import {
 /**
  * Issue #9: the quiz runs itself to completion on Durable Object alarms.
  *
- * Every assertion is on what Slack receives. The results window is one second
- * here (`RESULTS_SECS` in the worker test bindings), so a whole quiz plays out
- * in a few seconds of real time.
+ * Every assertion is on what Slack receives. The ready screen and the results
+ * window are one second each here (`READY_SECS` and `RESULTS_SECS` in the
+ * worker test bindings), so a whole quiz plays out in a few seconds of real
+ * time.
  *
  * Alarms really are scheduled, so the runtime delivers most of them by itself;
  * where a test needs a delivery the platform would not make — a duplicate, or
@@ -33,6 +34,9 @@ const LONG_WINDOW = '30s'
 
 /** Matches the `RESULTS_SECS` worker test binding in vitest.config.ts. */
 const RESULTS_SECS = 1
+
+/** Matches the `READY_SECS` worker test binding in vitest.config.ts. */
+const READY_SECS = 1
 
 /**
  * One recorder for the file: `fetchMock` interceptors persist across tests, so
@@ -109,12 +113,21 @@ describe('alarm-driven progression', () => {
   it('runs a whole quiz to completion, one Slack edit per transition', async () => {
     const stub = await start('C-FLOW', `2 ${WINDOW}`, 2)
 
-    // post question 1, results 1, question 2, results 2, final summary
-    await waitForCalls(slack, 5)
+    // post ready screen, question 1, results 1, question 2, results 2, final summary
+    await waitForCalls(slack, 6)
 
-    const [post, results1, question2, results2, summary] = slack.calls
+    const [post, question1, results1, question2, results2, summary] = slack.calls
     expect(post.method).toBe('chat.postMessage')
-    expect(headerText(post.blocks)).toBe('Question 1/2:')
+
+    // The quiz opens on the ready screen, not the first question.
+    expect(post.blocks).toEqual(
+      renderChannelReady(
+        2,
+        1,
+        READY_SECS,
+        countdownGifUrl(COUNTDOWN_ORIGIN, READY_SECS, 'q-1-ready'),
+      ),
+    )
 
     // Every later frame is an edit of the same channel message.
     for (const call of slack.updates) {
@@ -123,11 +136,18 @@ describe('alarm-driven progression', () => {
       expect(call.ts).toBe(POST_MESSAGE_TS)
     }
 
+    expect(headerText(question1.blocks)).toBe('Question 1/2:')
+    expect(question1.blocks[1].block_id).toBe('q-1')
+    expect(question1.blocks[1].accessory.action_id).toBe('radio_sel')
+    expect(question1.blocks[2].elements[0].image_url).toBe(
+      countdownGifUrl(COUNTDOWN_ORIGIN, 1, 'q-1'),
+    )
+
     // The results frame is exactly what the channel results renderer produces
-    // for the question that was posted.
+    // for the question that was asked.
     expect(results1.blocks).toEqual(
       renderChannelResults(
-        questionFrom(post.blocks, createTriviaQuestions(1)[0]),
+        questionFrom(question1.blocks, createTriviaQuestions(1)[0]),
         [],
         1,
         2,
@@ -158,7 +178,7 @@ describe('alarm-driven progression', () => {
     // Completion sets no alarm, and nothing further reaches Slack.
     expect(await runDurableObjectAlarm(stub)).toBe(false)
     await fireAlarm(stub)
-    expect(slack.calls).toHaveLength(5)
+    expect(slack.calls).toHaveLength(6)
 
     // The channel is free again.
     interceptTrivia(createTriviaQuestions(2))
@@ -175,62 +195,80 @@ describe('alarm-driven progression', () => {
 
   it('never edits the question while the answer window is open', async () => {
     const stub = await start('C-OPEN', `2 ${LONG_WINDOW}`, 2)
+    await waitForCalls(slack, 2) // question 1
 
     // An alarm exists (it is set for the window's end) but is not yet due.
     expect(await runDurableObjectAlarm(stub)).toBe(true)
     await fireAlarm(stub)
     await sleep(300)
 
+    expect(slack.updates).toHaveLength(1)
+    await dropScheduledAlarm(stub)
+  })
+
+  it('does not ask the first question early on a duplicate ready alarm', async () => {
+    const stub = await start('C-READY-DUP', `2 ${LONG_WINDOW}`, 2)
+
+    // Delivered while the ready screen is still up: nothing is due yet.
+    await fireAlarm(stub)
+    await fireAlarm(stub)
     expect(slack.updates).toHaveLength(0)
+
+    // The first question still goes up exactly once, when the screen ends.
+    await waitForCalls(slack, 2)
+    expect(headerText(slack.calls[1].blocks)).toBe('Question 1/2:')
+    await sleep(200)
+    expect(slack.updates).toHaveLength(1)
     await dropScheduledAlarm(stub)
   })
 
   it('treats a duplicate alarm for a passed transition as a no-op', async () => {
     const stub = await start('C-DUP', `2 ${WINDOW}`, 2)
 
-    await waitForCalls(slack, 2) // results for question 1
-    expect(headerText(slack.calls[1].blocks)).toBe('Answer 1/2:')
+    await waitForCalls(slack, 3) // results for question 1
+    expect(headerText(slack.calls[2].blocks)).toBe('Answer 1/2:')
 
     // The platform re-delivers the question alarm. It must change nothing.
     await fireAlarm(stub)
     await fireAlarm(stub)
-    expect(slack.calls).toHaveLength(2)
+    expect(slack.calls).toHaveLength(3)
 
     // ...and the results transition still happens exactly once, on time.
-    await waitForCalls(slack, 3)
-    expect(headerText(slack.calls[2].blocks)).toBe('Question 2/2:')
+    await waitForCalls(slack, 4)
+    expect(headerText(slack.calls[3].blocks)).toBe('Question 2/2:')
     await sleep(200)
     expect(slack.calls.filter((call) => headerText(call.blocks) === 'Question 2/2:')).toHaveLength(1)
   })
 
   it('goes straight to results when it wakes long after the deadline', async () => {
     const stub = await start('C-LATE', `2 ${WINDOW}`, 2)
+    await waitForCalls(slack, 2) // question 1
 
     // Nothing fires while the object is "down": the window expires unattended.
     await dropScheduledAlarm(stub)
     await sleep(1500)
-    expect(slack.updates).toHaveLength(0)
+    expect(slack.updates).toHaveLength(1)
 
     await fireAlarm(stub)
 
     // Results, not a re-post of the question the participants already saw.
-    expect(slack.updates).toHaveLength(1)
-    expect(headerText(slack.updates[0].blocks)).toBe('Answer 1/2:')
-    expect(slack.updates[0].text).toContain('Answer: Correct 1')
+    expect(slack.updates).toHaveLength(2)
+    expect(headerText(slack.updates[1].blocks)).toBe('Answer 1/2:')
+    expect(slack.updates[1].text).toContain('Answer: Correct 1')
 
     // The results still get their full run: downtime must not flash the answer
     // past the channel and jump to the next question.
     await sleep(500)
-    expect(slack.updates).toHaveLength(1)
-    await waitForCalls(slack, 3)
-    expect(headerText(slack.calls[2].blocks)).toBe('Question 2/2:')
+    expect(slack.updates).toHaveLength(2)
+    await waitForCalls(slack, 4)
+    expect(headerText(slack.calls[3].blocks)).toBe('Question 2/2:')
     await dropScheduledAlarm(stub)
   })
 
   it('retries rather than ending the quiz when Slack fails transiently', async () => {
     let rateLimited = true
-    slack.failHttp = () => {
-      if (!rateLimited) return null
+    slack.failHttp = (call) => {
+      if (!rateLimited || headerText(call.blocks) !== 'Answer 1/2:') return null
       rateLimited = false
 
       return 429
@@ -240,8 +278,8 @@ describe('alarm-driven progression', () => {
     const stub = await start('C-RATE-LIMIT', `2 ${WINDOW}`, 2)
 
     // The first results edit is rate-limited; the quiz must survive it.
-    await waitForCalls(slack, 2)
-    expect(slack.updates).toHaveLength(1)
+    await waitForCalls(slack, 3)
+    expect(slack.updates).toHaveLength(2)
     await sleep(100)
     // ...and the failure that made the alarm reject is on record.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('chat.update HTTP 429'))
@@ -249,8 +287,8 @@ describe('alarm-driven progression', () => {
 
     // The platform retries the alarm; this time the edit lands.
     await fireAlarm(stub)
-    expect(slack.updates).toHaveLength(2)
-    expect(headerText(slack.updates[1].blocks)).toBe('Answer 1/2:')
+    expect(slack.updates).toHaveLength(3)
+    expect(headerText(slack.updates[2].blocks)).toBe('Answer 1/2:')
 
     // Still a live quiz, not one ended by a rate limit.
     const refused = await channelObject('C-RATE-LIMIT').startQuiz(
@@ -265,6 +303,7 @@ describe('alarm-driven progression', () => {
 
   it('continues the quiz after the object is dropped mid-question', async () => {
     const stub = await start('C-RESTART', `2 ${WINDOW}`, 2)
+    await waitForCalls(slack, 2) // question 1
 
     await dropScheduledAlarm(stub)
     await dropInstance(stub)
@@ -275,8 +314,9 @@ describe('alarm-driven progression', () => {
     await fireAlarm(revived)
 
     // It picks up where it left off and runs the rest of the quiz by itself.
-    await waitForCalls(slack, 5)
+    await waitForCalls(slack, 6)
     expect(slack.updates.map((call) => headerText(call.blocks))).toEqual([
+      'Question 1/2:',
       'Answer 1/2:',
       'Question 2/2:',
       'Answer 2/2:',
@@ -290,8 +330,8 @@ describe('alarm-driven progression', () => {
       headerText(call.blocks) === 'Question 2/2:' ? 'message_not_found' : null
     const stub = await start('C-UPDATE-FAIL', `2 ${WINDOW}`, 2)
 
-    // results, failed question 2, best-effort final summary
-    await waitForCalls(slack, 4)
+    // ready screen, question 1, results, failed question 2, best-effort final summary
+    await waitForCalls(slack, 5)
     expect(slack.lastBlocks[0].text.text).toContain('Trivia Quiz Complete!')
     expect(recapButtonValue(slack.lastBlocks)).toBe(POST_MESSAGE_TS)
 
@@ -313,7 +353,8 @@ describe('alarm-driven progression', () => {
     slack.failUpdate = () => 'message_not_found'
     const stub = await start('C-DEAD-MESSAGE', `2 ${WINDOW}`, 2)
 
-    // failed results, then the best-effort summary attempt, which also fails
+    // ready screen, failed question 1, then the best-effort summary attempt,
+    // which also fails
     await waitForCalls(slack, 3)
     await sleep(300)
     expect(slack.calls).toHaveLength(3)
@@ -364,16 +405,16 @@ describe('alarm-driven progression', () => {
     const stub = await start('C-ONCE', `1 ${WINDOW}`, 1)
 
     // The last question's results go up...
-    await waitForCalls(slack, 2)
-    expect(headerText(slack.calls[1].blocks)).toBe('Answer 1/1:')
+    await waitForCalls(slack, 3)
+    expect(headerText(slack.calls[2].blocks)).toBe('Answer 1/1:')
 
     // ...and a duplicate alarm delivered during them does not end the quiz
     // early, which is what would post a second summary later.
     await fireAlarm(stub)
     await fireAlarm(stub)
-    expect(slack.calls).toHaveLength(2)
+    expect(slack.calls).toHaveLength(3)
 
-    await waitForCalls(slack, 3)
+    await waitForCalls(slack, 4)
     // Alarms after the end find nothing left to do.
     await fireAlarm(stub)
     await sleep(300)
@@ -385,18 +426,19 @@ describe('alarm-driven progression', () => {
     const slow = await start('C-TWO', `2 ${LONG_WINDOW}`, 2)
 
     // The quick channel finishes...
-    await waitForCalls(slack, 4)
+    await waitForCalls(slack, 6)
     const oneCalls = slack.calls.filter((call) => call.channel === 'C-ONE')
     expect(oneCalls.map((call) => call.method)).toEqual([
       'chat.postMessage',
+      'chat.update',
       'chat.update',
       'chat.update',
     ])
 
     // ...while the other channel's quiz is untouched, still on its question.
     const twoCalls = slack.calls.filter((call) => call.channel === 'C-TWO')
-    expect(twoCalls).toHaveLength(1)
-    expect(twoCalls[0].method).toBe('chat.postMessage')
+    expect(twoCalls.map((call) => call.method)).toEqual(['chat.postMessage', 'chat.update'])
+    expect(headerText(twoCalls[1].blocks)).toBe('Question 1/2:')
 
     // A finished quiz in one channel does not release or disturb the other.
     const refused = await channelObject('C-TWO').startQuiz(

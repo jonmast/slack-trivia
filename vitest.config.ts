@@ -35,6 +35,7 @@ export default defineConfig({
                   // A 1-second results window keeps alarm-driven flow tests
                   // to a few seconds of real time.
                   RESULTS_SECS: '1',
+                  READY_SECS: '1',
                 },
               },
             },

@@ -8,3 +8,6 @@ export const MAX_TIMEOUT_SECS = 60;
 
 /** How long the per-question results screen stays up before the next question. */
 export const RESULTS_SECS = 5;
+
+/** How long the ready screen stays up before the first question. */
+export const READY_SECS = 10;

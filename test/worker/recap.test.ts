@@ -67,7 +67,9 @@ async function playQuiz(label: string): Promise<string> {
   const started = await stub.startQuiz(CHANNEL, '1 2s', COUNTDOWN_ORIGIN)
   expect(started.ok).toBe(true)
 
-  const posted = slack.calls[before]
+  // ready screen posted, then the question
+  await waitForCalls(slack, before + 2)
+  const posted = slack.calls[before + 1]
   await stub.submitAnswer(
     PARTICIPANT,
     correctOption(posted.blocks),
@@ -75,9 +77,9 @@ async function playQuiz(label: string): Promise<string> {
     Date.now(),
   )
 
-  // question posted, results, final summary
-  await waitForCalls(slack, before + 3)
-  const summary = slack.calls[before + 2]
+  // results, final summary
+  await waitForCalls(slack, before + 4)
+  const summary = slack.calls[before + 3]
   const messageTs = recapButtonValue(summary.blocks)
   expect(messageTs).toBeTruthy()
 
