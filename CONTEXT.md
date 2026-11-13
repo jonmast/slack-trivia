@@ -27,6 +27,10 @@ _Avoid_: deadline, cutoff, timeout
 The screen a channel quiz opens on: how many questions there will be and how long each one lasts, with a countdown to the first question so participants can gather before it appears. Nothing can be answered while it is up.
 _Avoid_: lobby, wait screen, intro
 
+**Extended ready screen**:
+The ready screen kept up after its countdown runs out because screening has not yet passed enough questions. It says finding good questions is taking longer than expected, and lasts until enough pass or about 30 seconds are up; then the quiz starts with however many passed, saying it is shorter, or is cancelled with an apology if none did.
+_Avoid_: delay screen, waiting room
+
 **Results**:
 The screen shown after a question closes: the correct answer plus the current leaderboard.
 _Avoid_: reveal, answer screen

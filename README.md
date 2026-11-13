@@ -9,12 +9,25 @@ The bot runs entirely on Cloudflare Workers. There is no Node server and no Dock
 - `worker/index.ts` — the Worker entry point. It verifies Slack requests and handles them on `/slack/events` via `slack-cloudflare-workers` (HTTP request URL only; no Bolt, no Socket Mode).
 - `worker/channel-object.ts` — the SQLite-backed `ChannelObject` Durable Object, one per Slack channel, bound as `CHANNEL_OBJECT`. It builds the channel's Effect services from its bindings and runs one program per RPC method and alarm. A quiz in progress survives deploys, crashes and idle eviction.
 - `worker/channel-quiz.ts` — those programs: starting a quiz, recording answers, serving recaps and the alarm-driven ready/question/results/complete transitions.
-- `worker/quiz-store.ts` (the object's SQLite tables, stored quiz rows and alarm), `slack-client.ts` (`chat.postMessage`/`chat.update`), `trivia-api.ts` (question fetching), `config.ts` (settings read from bindings) and `logger.ts` (JSON log lines for Workers Logs) — the services those programs run against.
+- `worker/quiz-store.ts` (the object's SQLite tables, stored quiz rows and alarm), `slack-client.ts` (`chat.postMessage`/`chat.update`), `trivia-api.ts` (question fetching), `jev.ts` (Jev's classifier through OpenCode Zen), `screening-log.ts` (the `screenings` table in D1), `config.ts` (settings read from bindings) and `logger.ts` (JSON log lines for Workers Logs) — the services those programs run against.
+- `worker/screening.ts` — screening: the classes Jev sorts questions into, what it is shown, and which verdicts let a question be asked.
+- `migrations/` — the D1 schema, applied with `wrangler d1 migrations apply`.
 - `src/` — modules shared by the Worker and the build script: `trivia-core.ts` (the `Quiz` class, scoring, `/quizzo` argument parsing, the snapshot schema), `slack-ui.ts` (the channel renderers and recap modal), `countdown.ts` (the countdown GIF renderer) and `timing.ts` (answer-window, ready screen and results durations).
 - `public/` — static assets served through the `ASSETS` binding. `public/countdown/` is build output and is gitignored.
-- `wrangler.jsonc` — Worker, Durable Object and asset configuration.
+- `wrangler.jsonc` — Worker, Durable Object, D1 and asset configuration.
 
-Why Durable Objects: see `docs/adr/0001-cloudflare-durable-objects.md`. Why Effect, and which failures end a quiz: see `docs/adr/0002-effect.md`.
+Why Durable Objects: see `docs/adr/0001-cloudflare-durable-objects.md`. Why Effect, and which failures end a quiz: see `docs/adr/0002-effect.md`. Why questions are screened with Jev and recorded in D1: see `docs/adr/0003-jev-screening-recorded-in-d1.md`.
+
+## Screening
+
+`/quizzo` fetches twice the questions asked for and screens them with Jev, in one request, while the ready screen counts down. Only questions Jev calls `good` with a probability of at least 0.70 are asked. If too few pass, the ready screen says so and the quiz keeps fetching and screening for up to 30 seconds, then starts with what passed or is cancelled. If Jev cannot be reached, errors or takes longer than 6 seconds, or `OPENCODE_API_KEY` is not set, questions are asked unscreened.
+
+Every verdict is logged and written to the `screenings` table of the `DB` D1 database: the question, its options and correct answer, the channel and quiz message, the outcome (`served`, `rejected` or `unscreened`), Jev's class and probabilities, and the model. To trace a question someone reported:
+
+```bash
+wrangler d1 execute slack-trivia --remote \
+  --command "SELECT * FROM screenings WHERE question LIKE '%Mercury%'"
+```
 
 ## Countdown GIFs
 
@@ -26,7 +39,8 @@ The bot is reached over HTTPS by Slack, so local development means exposing `wra
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars   # fill in the bot token and signing secret
+cp .dev.vars.example .dev.vars   # fill in the bot token, signing secret and OpenCode key
+wrangler d1 migrations apply slack-trivia --local
 pnpm dev                          # wrangler dev, listening on http://localhost:8787
 ```
 
@@ -50,6 +64,14 @@ Secrets live in the platform, never in the repo. Set them once per environment:
 ```bash
 wrangler secret put SLACK_BOT_TOKEN
 wrangler secret put SLACK_SIGNING_SECRET
+wrangler secret put OPENCODE_API_KEY   # an OpenCode Console API key, for Jev
+```
+
+The screening record needs a D1 database, created once. `wrangler.jsonc` binds it as `DB` with a placeholder `database_id`: replace it with the ID `create` prints, then apply the schema, and apply it again whenever `migrations/` gains a file:
+
+```bash
+wrangler d1 create slack-trivia
+wrangler d1 migrations apply slack-trivia --remote
 ```
 
 Then release:
