@@ -1,10 +1,16 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Duration, Effect, Layer, Schema } from "effect";
 import { HttpClient } from "effect/http";
 import { TriviaQuestion } from "../src/trivia-core";
 
 const TRIVIA_API_URL = "https://the-trivia-api.com/v2/questions";
 
-/** The Trivia API could not be reached, or sent something other than questions. */
+/** How long a fetch may take before it counts as failed. */
+const FETCH_TIMEOUT = Duration.seconds(5);
+
+/**
+ * The Trivia API could not be reached, did not answer in time, or sent
+ * something other than questions.
+ */
 export class TriviaApiError extends Schema.TaggedError<TriviaApiError>()(
   "TriviaApiError",
   { cause: Schema.Defect() },
@@ -43,6 +49,7 @@ export class TriviaApi extends Context.Service<
 
             return yield* decodeQuestions(yield* response.json);
           },
+          Effect.timeout(FETCH_TIMEOUT),
           Effect.mapError((cause) => new TriviaApiError({ cause })),
         ),
       });

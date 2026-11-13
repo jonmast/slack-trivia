@@ -1,7 +1,6 @@
 import { Effect, Option } from "effect";
 import type { TriviaQuestion } from "../src/trivia-core";
 import { Jev, type JevChoice, type JevClass } from "./jev";
-import { ScreeningLog, type ScreeningQuiz } from "./screening-log";
 
 /** Every class Jev sorts a question into; only `good` questions are asked. */
 export const SCREENING_CLASSES: ReadonlyArray<JevClass> = [
@@ -102,17 +101,16 @@ function judge(
 }
 
 /**
- * Screen `candidates` with Jev in one request and record every verdict. When
- * Jev cannot be reached or errors, every candidate is unscreened: a quiz is
- * never held up on Jev. Never fails.
+ * Screen `candidates` with Jev in one request. When Jev cannot be reached or
+ * errors, every candidate is unscreened: a quiz is never held up on Jev.
+ * Never fails. The verdicts are not yet recorded; see `recordVerdicts`.
  */
 export const screenQuestions = Effect.fn("screenQuestions")(function* (
-  quiz: ScreeningQuiz,
   candidates: ReadonlyArray<TriviaQuestion>,
 ) {
   if (candidates.length === 0) return [];
 
-  const verdicts = yield* (yield* Jev)
+  return yield* (yield* Jev)
     .classify(SCREENING_PURPOSE, SCREENING_CLASSES, candidates.map(screeningItem))
     .pipe(
       Effect.map(({ model, choices }) =>
@@ -126,10 +124,6 @@ export const screenQuestions = Effect.fn("screenQuestions")(function* (
         ),
       ),
     );
-
-  yield* (yield* ScreeningLog).record(quiz, verdicts);
-
-  return verdicts;
 });
 
 /** The questions a quiz may ask out of `verdicts`, in order. */

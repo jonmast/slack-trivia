@@ -323,10 +323,16 @@ export function itemQuestionId(item: string): string {
 export class JevFake {
   requests: JevRequest[] = []
   judge: (item: string) => JevVerdict | undefined = () => verdict('good', 0.95)
+  /** An HTTP status to fail the request with, by its index in `requests`, or null to answer. */
+  failStatus: (index: number) => number | null = () => null
+  /** How long each answer takes. */
+  delayMs = 0
 
   reset(): void {
     this.requests = []
     this.judge = () => verdict('good', 0.95)
+    this.failStatus = () => null
+    this.delayMs = 0
   }
 
   /** Every item Jev was asked about, across all requests, in order. */
@@ -340,37 +346,47 @@ export class JevFake {
     fetchMock
       .get(JEV_ORIGIN)
       .intercept({ path: JEV_PATH, method: 'POST', headers: JEV_AUTH_HEADERS })
-      .reply(200, (options) => {
+      .reply<object>((options) => {
         const request = decodeJevRequest(requestBodyText(options.body))
+        const status = this.failStatus(this.requests.length)
         this.requests.push(request)
 
-        // Classes are matched by description, so the fake is blind to how
-        // the worker numbers them.
-        const idOf = (name: string) => {
-          const { description } = SCREENING_CLASSES.find((c) => c.name === name)!
+        if (status) return { statusCode: status, data: { error: 'unavailable' } }
 
-          return request.state.classes.find((c) => c.description === description)!.id
-        }
+        const answer = this.answer(request)
 
-        const answers = Object.entries(request.questions).flatMap(([key, question]) => {
-          const judged = this.judge(question.instructions.item.text)
-
-          if (!judged) return []
-
-          const probabilities = Object.fromEntries(
-            Object.entries(judged.probabilities).map(([name, p]) => [idOf(name), p]),
-          )
-
-          return [[key, { type: 'choice', choice: idOf(judged.choice), confidence: 0.9, probabilities }]]
-        })
-
-        return {
-          model: request.model,
-          answers: Object.fromEntries(answers),
-          usage: { input_tokens: 100, output_tokens: 10 },
-        }
+        // A promise body is answered once it settles.
+        return { statusCode: 200, data: this.delayMs ? sleep(this.delayMs).then(() => answer) : answer }
       })
       .persist()
+  }
+
+  private answer(request: JevRequest) {
+    // Classes are matched by description, so the fake is blind to how the
+    // worker numbers them.
+    const idOf = (name: string) => {
+      const { description } = SCREENING_CLASSES.find((c) => c.name === name)!
+
+      return request.state.classes.find((c) => c.description === description)!.id
+    }
+
+    const answers = Object.entries(request.questions).flatMap(([key, question]) => {
+      const judged = this.judge(question.instructions.item.text)
+
+      if (!judged) return []
+
+      const probabilities = Object.fromEntries(
+        Object.entries(judged.probabilities).map(([name, p]) => [idOf(name), p]),
+      )
+
+      return [[key, { type: 'choice', choice: idOf(judged.choice), confidence: 0.9, probabilities }]]
+    })
+
+    return {
+      model: request.model,
+      answers: Object.fromEntries(answers),
+      usage: { input_tokens: 100, output_tokens: 10 },
+    }
   }
 }
 

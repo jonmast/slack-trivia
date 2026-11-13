@@ -1,6 +1,8 @@
 import { env, fetchMock, runInDurableObject } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { ChannelObject } from '../../worker/channel-object'
+import type { StartQuizResult } from '../../worker/channel-quiz'
+import type { Env } from '../../worker/env'
 import {
   JEV_AUTH_HEADERS,
   JEV_ORIGIN,
@@ -48,6 +50,21 @@ function dropScheduledAlarm(stub: DurableObjectStub<ChannelObject>): Promise<voi
   return runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm())
 }
 
+/**
+ * Start a quiz on a second channel object over `stub`'s storage, built from
+ * `objectEnv` rather than the test bindings. Alarms still reach the object
+ * the platform built.
+ */
+async function startWithEnv(
+  stub: DurableObjectStub<ChannelObject>,
+  channelId: string,
+  objectEnv: Env,
+): Promise<StartQuizResult> {
+  return runInDurableObject(stub, (_instance, state) =>
+    new ChannelObject(state, objectEnv).startQuiz(channelId, `2 ${LONG_WINDOW}`, COUNTDOWN_ORIGIN),
+  )
+}
+
 /** One answer as Jev's wire format has it, class IDs and all. */
 type WireAnswer = { choice: string; probabilities: { [classId: string]: number } }
 
@@ -59,13 +76,20 @@ function replyFor(key: (index: number) => string, answer: WireAnswer): string {
   })
 }
 
-/** Start a two-question quiz on four fetched questions and see it ask the first. */
-async function expectUnscreenedQuiz(channelId: string): Promise<void> {
+/**
+ * Start a two-question quiz on four fetched questions and see it ask the
+ * first, unscreened. `startQuiz` starts it; by default through the stub.
+ */
+async function expectUnscreenedQuiz(
+  channelId: string,
+  startQuiz: (stub: DurableObjectStub<ChannelObject>) => Promise<{ ok: boolean }> = (stub) =>
+    stub.startQuiz(channelId, `2 ${LONG_WINDOW}`, COUNTDOWN_ORIGIN),
+): Promise<void> {
   const warn = vi.spyOn(console, 'warn')
   interceptTrivia(createTriviaQuestions(4))
 
   const stub = channelObject(channelId)
-  const result = await stub.startQuiz(channelId, `2 ${LONG_WINDOW}`, COUNTDOWN_ORIGIN)
+  const result = await startQuiz(stub)
   expect(result.ok).toBe(true)
 
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('Jev is unavailable'))
@@ -131,6 +155,13 @@ describe('screening that cannot be done or recorded', () => {
   ])('asks questions unscreened when Jev answers with %s', async (_case, body) => {
     interceptJev(200, body)
     await expectUnscreenedQuiz('C-JEV-UNUSABLE')
+  })
+
+  it('asks questions unscreened, without calling Jev, when there is no OpenCode key', async () => {
+    // No Jev interceptor: a call would fail the test.
+    await expectUnscreenedQuiz('C-NO-KEY', (stub) =>
+      startWithEnv(stub, 'C-NO-KEY', { ...env, OPENCODE_API_KEY: undefined }),
+    )
   })
 
   it('keeps the channel object working when the DB binding is missing', async () => {

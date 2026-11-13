@@ -1,6 +1,6 @@
-import { fetchMock, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
-import type { ChannelObject } from '../../worker/channel-object'
+import { env, fetchMock, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { ChannelObject } from '../../worker/channel-object'
 import { renderChannelCancelled, renderChannelExtended } from '../../src/slack-ui'
 import {
   JevFake,
@@ -35,13 +35,21 @@ const LONG_WINDOW = '30s'
 const slack = new SlackRecorder()
 const jev = new JevFake()
 
-/** The Trivia API, serving as many fresh questions as each request asks for. */
+/**
+ * The Trivia API, serving as many fresh questions as each request asks for;
+ * `failStatus` and `delayMs` pick requests, by their index in `limits`, to
+ * fail or slow down.
+ */
 class TriviaFake {
   limits: number[] = []
+  failStatus: (index: number) => number | null = () => null
+  delayMs: (index: number) => number = () => 0
   private served = 0
 
   reset(): void {
     this.limits = []
+    this.failStatus = () => null
+    this.delayMs = () => 0
     this.served = 0
   }
 
@@ -49,16 +57,33 @@ class TriviaFake {
     fetchMock
       .get('https://the-trivia-api.com')
       .intercept({ path: /^\/v2\/questions/, method: 'GET' })
-      .reply(200, (options) => {
+      .reply<object>((options) => {
+        const index = this.limits.length
         const limit = Number(new URL(options.path, 'https://x').searchParams.get('limit'))
         this.limits.push(limit)
 
-        return createTriviaQuestions(limit).map((question): TriviaApiQuestion => {
-          this.served += 1
-          const id = `t${this.served}`
+        const status = this.failStatus(index)
 
-          return { ...question, id, question: { text: `Question ${id}?` } }
+        if (status) return { statusCode: status, data: { error: 'unavailable' } }
+
+        const ids = Array.from({ length: limit }, () => {
+          this.served += 1
+
+          return `t${this.served}`
         })
+
+        const questions = createTriviaQuestions(ids.length).map(
+          (question, i): TriviaApiQuestion => ({
+            ...question,
+            id: ids[i],
+            question: { text: `Question ${ids[i]}?` },
+          }),
+        )
+
+        const delay = this.delayMs(index)
+
+        // A promise body is answered once it settles.
+        return { statusCode: 200, data: delay ? sleep(delay).then(() => questions) : questions }
       })
       .persist()
   }
@@ -81,6 +106,22 @@ async function start(channelId: string, args: string) {
 
 function dropScheduledAlarm(stub: DurableObjectStub<ChannelObject>): Promise<void> {
   return runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm())
+}
+
+/** Deliver the alarm the way the platform would, bypassing its schedule. */
+function fireAlarm(stub: DurableObjectStub<ChannelObject>): Promise<void> {
+  return runInDurableObject(stub, (instance) => instance.alarm!())
+}
+
+/** Passes `t1` and anything after the first `firstBatch` questions; rejects the rest. */
+function passFirstAndLater(firstBatch: number) {
+  return (item: string) => {
+    const id = itemQuestionId(item)
+
+    return id === 't1' || Number(id.slice(1)) > firstBatch
+      ? verdict('good', 0.95)
+      : verdict('stale', 0.8)
+  }
 }
 
 /** The IDs of the questions put to the channel, in order. */
@@ -300,5 +341,123 @@ describe('screening questions with Jev', () => {
     jev.reset()
     const restart = await start('C-NONE', `2 ${LONG_WINDOW}`)
     await dropScheduledAlarm(restart)
+  })
+
+  it('asks the questions a search found unscreened when Jev fails then', async () => {
+    jev.judge = passFirstAndLater(99)
+    jev.failStatus = (index) => (index === 1 ? 503 : null)
+
+    const stub = await start('C-SEARCH-JEV', `2 ${LONG_WINDOW}`)
+
+    // ready, extended ready screen, first question: no waiting out the rest.
+    await waitForCalls(slack, 3)
+    expect(headerText(slack.updates[1].blocks)).toBe('Question 1/2:')
+    expect(trivia.limits).toEqual([4, 2])
+
+    const rows = await screeningRows('C-SEARCH-JEV')
+    expect(rows.slice(4).map((row) => [row.question_id, row.outcome])).toEqual([
+      ['t5', 'unscreened'],
+      ['t6', 'unscreened'],
+    ])
+
+    await dropScheduledAlarm(stub)
+  })
+
+  it('starts with what passed when The Trivia API fails during a search', async () => {
+    jev.judge = passFirstAndLater(99)
+    trivia.failStatus = (index) => (index > 0 ? 500 : null)
+    const warn = vi.spyOn(console, 'warn')
+
+    const stub = await start('C-SEARCH-TRIVIA', `2 ${LONG_WINDOW}`)
+
+    // ready, extended ready screen, shortened ready screen
+    await waitForCalls(slack, 3, 10_000)
+    expect(slack.updates[1].blocks[2].elements[0].text).toBe(
+      '🔎 We only found 1 good question, so this quiz is shorter than planned.',
+    )
+    expect(trivia.limits.length).toBeGreaterThan(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch more trivia questions'))
+    warn.mockRestore()
+
+    await dropScheduledAlarm(stub)
+  })
+
+  it('ends the extended ready screen on time even when a search hangs', async () => {
+    jev.judge = passFirstAndLater(99)
+    // Longer than the extended ready screen, and than a fetch is allowed.
+    trivia.delayMs = (index) => (index > 0 ? 6000 : 0)
+
+    const stub = await start('C-SEARCH-SLOW', `2 ${LONG_WINDOW}`)
+
+    await waitForCalls(slack, 2)
+    const extendedAt = Date.now()
+
+    // The three-second extended ready screen ends when it should, not when
+    // the hung fetch gives up.
+    await waitForCalls(slack, 3, 10_000)
+    expect(Date.now() - extendedAt).toBeLessThan(4500)
+    expect(headerText(slack.updates[1].blocks)).toBe('Get ready!')
+    expect(slack.updates[1].text).toContain('1 good question')
+
+    await dropScheduledAlarm(stub)
+  })
+
+  it('retries starting the quiz without searching again when Slack fails', async () => {
+    jev.judge = passFirstAndLater(4)
+    let rateLimited = true
+    slack.failHttp = (call) => {
+      if (!rateLimited || headerText(call.blocks) !== 'Question 1/2:') return null
+      rateLimited = false
+
+      return 429
+    }
+
+    const stub = await start('C-SEARCH-SLACK', `2 ${LONG_WINDOW}`)
+
+    // ready, extended ready screen, the rate-limited first question
+    await waitForCalls(slack, 3)
+    expect(jev.requests).toHaveLength(2)
+
+    // The platform retries the alarm; the start goes through on what the
+    // search already found.
+    await fireAlarm(stub)
+    expect(headerText(slack.updates[2].blocks)).toBe('Question 1/2:')
+    expect(askedIds()).toEqual(['t1', 't1'])
+    expect(jev.requests).toHaveLength(2)
+    expect(trivia.limits).toEqual([4, 2])
+
+    await dropScheduledAlarm(stub)
+  })
+
+  it('moves the quiz on once when the ready alarm fires while screening still waits on Jev', async () => {
+    // Slower than the one-second ready screen, but within the inline
+    // screening's own timeout; the ready alarm's object keeps the test
+    // bindings' 300 ms and gives up on Jev first.
+    jev.delayMs = 1500
+    const stub = channelObject('C-RACE')
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const patient = new ChannelObject(state, { ...env, JEV_TIMEOUT_MS: '5000' })
+      const result = await patient.startQuiz('C-RACE', `2 ${LONG_WINDOW}`, COUNTDOWN_ORIGIN)
+      expect(result.ok).toBe(true)
+    })
+
+    await waitForCalls(slack, 2)
+    await sleep(1000)
+
+    expect(jev.requests).toHaveLength(2)
+    expect(slack.updates.map((call) => headerText(call.blocks))).toEqual(['Question 1/2:'])
+
+    // Only the run that moved the quiz on is recorded: the ready alarm's,
+    // which asked them unscreened.
+    const rows = await screeningRows('C-RACE')
+    expect(rows.map((row) => row.outcome)).toEqual([
+      'unscreened',
+      'unscreened',
+      'unscreened',
+      'unscreened',
+    ])
+
+    await dropScheduledAlarm(stub)
   })
 })

@@ -1,4 +1,4 @@
-import { Clock, Effect, Match, Option, Schema } from "effect";
+import { Clock, Duration, Effect, Match, Option, Schema } from "effect";
 import type { AnyMessageBlock } from "slack-cloudflare-workers";
 import {
   Quiz,
@@ -20,7 +20,7 @@ import { WorkerConfig } from "./config";
 import type { Jev } from "./jev";
 import { QuizStore, type QuizRecord } from "./quiz-store";
 import { askable, screenQuestions } from "./screening";
-import type { ScreeningLog } from "./screening-log";
+import { ScreeningLog } from "./screening-log";
 import {
   SlackClient,
   type SlackApiError,
@@ -411,8 +411,9 @@ const loadScreening = Effect.fn("loadScreening")(function* (messageTs: string) {
  * asked, and leave the ready screen to end when it was going to. The record
  * is read again once Jev has answered, and left alone if screening finished
  * meanwhile: started by `startQuiz` and, after an eviction or a slow Jev, by
- * the ready alarm, screening can run twice, recording a verdict twice, but
- * the quiz moves on once.
+ * the ready alarm, screening can run twice, but only the run that moves the
+ * quiz on is kept and recorded. The quiz is saved before its verdicts are
+ * recorded, so a slow D1 never holds it up.
  */
 const screen = Effect.fn("screen")(function* (messageTs: string) {
   const store = yield* QuizStore;
@@ -420,11 +421,9 @@ const screen = Effect.fn("screen")(function* (messageTs: string) {
 
   if (Option.isNone(before)) return;
 
-  const verdicts = yield* screenQuestions(
-    yield* screeningQuiz(messageTs),
-    before.value.pending,
-  );
-
+  const quiz = yield* screeningQuiz(messageTs);
+  const candidates = before.value.pending;
+  const verdicts = yield* screenQuestions(candidates);
   const after = yield* loadScreening(messageTs);
 
   if (Option.isNone(after)) return;
@@ -438,6 +437,7 @@ const screen = Effect.fn("screen")(function* (messageTs: string) {
   // A no-op while the countdown runs; when the ready alarm is the one
   // screening, the countdown is over and this ends the ready screen next.
   yield* store.setAlarm(after.value.deadline);
+  yield* (yield* ScreeningLog).record(quiz, verdicts);
 });
 
 /**
@@ -543,9 +543,13 @@ const settle = Effect.fn("settle")(function* (
 
 /**
  * One more search on an extended ready screen: fetch and screen enough
- * questions to cover the shortfall twice over, then start the quiz if they
- * do, or search again shortly. Once the extended ready screen has run its
- * course, settle for what passed.
+ * questions to cover the shortfall twice over, skipping any already
+ * waiting to be asked, then start the quiz if they do, or search again shortly. Once
+ * the extended ready screen has run its course, settle for what passed; a
+ * search still under way then is abandoned.
+ *
+ * What a search found is saved before the quiz is started, so a start that
+ * fails transiently is retried without searching again.
  */
 const search = Effect.fn("search")(function* (
   messageTs: string,
@@ -555,9 +559,15 @@ const search = Effect.fn("search")(function* (
   const now = yield* Clock.currentTimeMillis;
   const until = record.extendedUntil ?? now;
 
+  if (shortfall(record) <= 0) return yield* advance(messageTs, record);
+
   if (now >= until) return yield* settle(messageTs, record);
 
-  const fetched = yield* (yield* TriviaApi)
+  const quiz = yield* screeningQuiz(messageTs);
+
+  const known = new Set(record.pending.map((question) => question.id));
+
+  const verdicts = yield* (yield* TriviaApi)
     .fetchQuestions(shortfall(record) * CANDIDATES_PER_QUESTION)
     .pipe(
       Effect.catchTag("TriviaApiError", (error) =>
@@ -565,24 +575,36 @@ const search = Effect.fn("search")(function* (
           Effect.as([]),
         ),
       ),
+      Effect.flatMap((fetched) =>
+        screenQuestions(fetched.filter((question) => !known.has(question.id))),
+      ),
+      Effect.timeoutOption(Duration.millis(until - now)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.logWarning(
+              "The extended ready screen ran out mid-search",
+            ).pipe(Effect.as([])),
+          onSome: Effect.succeed,
+        }),
+      ),
     );
 
-  const known = new Set(record.pending.map((question) => question.id));
-  const fresh = fetched.filter((question) => !known.has(question.id));
+  const found = {
+    ...record,
+    pending: [...record.pending, ...askable(verdicts)],
+  };
 
-  const verdicts = yield* screenQuestions(
-    yield* screeningQuiz(messageTs),
-    fresh,
-  );
-
-  const found = { ...record, pending: [...record.pending, ...askable(verdicts)] };
+  yield* store.save(messageTs, found);
+  yield* (yield* ScreeningLog).record(quiz, verdicts);
 
   if (shortfall(found) <= 0) return yield* advance(messageTs, found);
 
-  const deadline = Math.min(
-    (yield* Clock.currentTimeMillis) + SEARCH_INTERVAL_MS,
-    until,
-  );
+  const later = yield* Clock.currentTimeMillis;
+
+  if (later >= until) return yield* settle(messageTs, found);
+
+  const deadline = Math.min(later + SEARCH_INTERVAL_MS, until);
 
   yield* store.save(messageTs, { ...found, deadline });
   yield* store.setAlarm(deadline);

@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer } from "effect";
+import { Clock, Context, Duration, Effect, Layer } from "effect";
 import type { Verdict } from "./screening";
 
 /**
@@ -9,6 +9,9 @@ export class ScreeningDatabase extends Context.Service<
   ScreeningDatabase,
   D1Database | undefined
 >()("slack-trivia/worker/ScreeningDatabase") {}
+
+/** How long recording waits on D1 before giving up on the rows. */
+const RECORD_TIMEOUT = Duration.seconds(2);
 
 const INSERT_SCREENING = `
   INSERT INTO screenings (
@@ -25,8 +28,9 @@ export type ScreeningQuiz = {
 
 /**
  * The record of every screening verdict: a structured log line each, and a
- * `screenings` row each in D1. Never fails: a verdict that cannot be stored
- * is logged as such, and the quiz carries on.
+ * `screenings` row each in D1. Never fails, and gives up on D1 after a few
+ * seconds: a verdict that cannot be stored is logged as such, and the quiz
+ * carries on.
  */
 export class ScreeningLog extends Context.Service<
   ScreeningLog,
@@ -91,6 +95,7 @@ export class ScreeningLog extends Context.Service<
               ),
             );
           }).pipe(
+            Effect.timeout(RECORD_TIMEOUT),
             Effect.catch((error) =>
               Effect.logError("Failed to record screening verdicts:", error),
             ),
