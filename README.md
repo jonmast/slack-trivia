@@ -20,9 +20,9 @@ Why Durable Objects: see `docs/adr/0001-cloudflare-durable-objects.md`. Why Effe
 
 ## Screening
 
-`/quizzo` fetches twice the questions asked for and screens them with Jev, in one request, while the ready screen counts down. Only questions Jev calls `good` with a probability of at least 0.70 are asked. If too few pass, the ready screen says so and the quiz keeps fetching and screening for up to 30 seconds, then starts with what passed or is cancelled. If Jev cannot be reached, errors or takes longer than 6 seconds, or `OPENCODE_API_KEY` is not set, questions are asked unscreened.
+`/quizzo` fetches twice the questions asked for and screens them with Jev, in one request, while the ready screen counts down. Only questions Jev calls `good` with a probability of at least 0.70 are asked. If too few pass, the ready screen says so and the quiz keeps fetching and screening for up to 30 seconds, then starts with what passed or is cancelled. If Jev cannot be reached, errors, takes longer than 6 seconds or gives no usable answer for any question, or `OPENCODE_API_KEY` is not set, questions are asked unscreened; a single question Jev gives no usable answer for is asked unscreened too.
 
-Every verdict is logged and written to the `screenings` table of the `DB` D1 database: the question, its options and correct answer, the channel and quiz message, the outcome (`served`, `rejected` or `unscreened`), Jev's class and probabilities, and the model. To trace a question someone reported:
+Every verdict is logged and written to the `screenings` table of the `DB` D1 database, after the quiz has moved on and with a two-second limit, so D1 never holds a quiz up: the question, its options and correct answer, the channel and quiz message, the outcome (`served`, `rejected` or `unscreened`), Jev's class and probabilities, and the model. To trace a question someone reported:
 
 ```bash
 wrangler d1 execute slack-trivia --remote \
