@@ -7,7 +7,6 @@ import {
 } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import worker, { SLACK_EVENTS_PATH } from '../../worker/index'
-import { SPEED_BONUS_MAX } from '../../src/trivia-core'
 import {
   SlackRecorder,
   channelObject,
@@ -56,7 +55,7 @@ function blockId(blocks: any[]): string {
   return blocks[1].block_id
 }
 
-/** The `N. <@user>: P points · ⚡ B · a/b answered` lines of the final summary. */
+/** The `N. <@user>: P points · ⚡ B% · a/b answered` lines of the final summary. */
 function finalLeaderboard(blocks: any[]): string[] {
   const text: string = blocks[1].text.text
 
@@ -65,7 +64,7 @@ function finalLeaderboard(blocks: any[]): string[] {
 
 /** A final summary line split into its parts, for bonuses that depend on timing. */
 function parseEntry(line: string) {
-  const match = /^(\d+)\. <@([^>]+)>: (\d+) points? · ⚡ (\d+\.\d\d) · (\d+\/\d+) answered$/.exec(line)
+  const match = /^(\d+)\. <@([^>]+)>: (\d+) points? · ⚡ (\d+)% · (\d+\/\d+) answered$/.exec(line)
 
   if (!match) throw new Error(`Unexpected leaderboard line: ${line}`)
   const [, rank, userId, points, speedBonus, answered] = match
@@ -154,8 +153,9 @@ describe('recording answers', () => {
     expect(rest).toEqual([])
     expect(fast).toMatchObject({ rank: 1, userId: 'U-FAST', points: 1, answered: '1/1' })
     expect(slow).toMatchObject({ rank: 2, userId: 'U-SLOW', points: 1, answered: '1/1' })
-    expect(fast.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 1)
-    expect(slow.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 1)
+    expect(fast.speedBonus).toBeGreaterThan(75)
+    expect(slow.speedBonus).toBeGreaterThan(25)
+    expect(slow.speedBonus).toBeLessThan(75)
 
     // The results leaderboard, shown before the summary, has them too, in
     // whole points.
@@ -179,7 +179,7 @@ describe('recording answers', () => {
 
     await waitForCalls(slack, 4)
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-LAGGED>: 1 point · ⚡ 0.00 · 1/1 answered',
+      '1. <@U-LAGGED>: 1 point · ⚡ 0% · 1/1 answered',
     ])
   })
 
@@ -197,7 +197,7 @@ describe('recording answers', () => {
     // Credited to question 1, where that answer ID is correct; had it landed on
     // question 2 it would have matched nothing and scored zero.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-LATE>: 1 point · ⚡ 0.00 · 1/2 answered',
+      '1. <@U-LATE>: 1 point · ⚡ 0% · 1/2 answered',
     ])
   })
 
@@ -216,7 +216,8 @@ describe('recording answers', () => {
     const [entry, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
     expect(rest).toEqual([])
     expect(entry).toMatchObject({ rank: 1, userId: 'U-NAN', points: 1, answered: '1/1' })
-    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 1)
+    expect(entry.speedBonus).toBeGreaterThan(25)
+    expect(entry.speedBonus).toBeLessThan(75)
   })
 
   it('records an answer synchronously, returning nothing to await', async () => {
@@ -254,7 +255,7 @@ describe('recording answers', () => {
     // Only the final choice counts: the point and bonus from the first pick are
     // refunded, and the change is not a second answer.
     expect(finalLeaderboard(slack.lastBlocks)).toEqual([
-      '1. <@U-FICKLE>: 0 points · ⚡ 0.00 · 1/1 answered',
+      '1. <@U-FICKLE>: 0 points · ⚡ 0% · 1/1 answered',
     ])
   })
 
@@ -340,6 +341,6 @@ describe('recording answers', () => {
     const [clicker, ...rest] = finalLeaderboard(slack.lastBlocks).map(parseEntry)
     expect(rest).toEqual([])
     expect(clicker).toMatchObject({ rank: 1, userId: 'U-CLICKER', points: 1, answered: '1/1' })
-    expect(clicker.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 1)
+    expect(clicker.speedBonus).toBeGreaterThan(75)
   })
 })

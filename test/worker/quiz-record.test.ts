@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { Effect, Option, Schema } from 'effect'
-import { Quiz, SPEED_BONUS_MAX } from '../../src/trivia-core'
+import { Quiz } from '../../src/trivia-core'
+import { renderRecapModal } from '../../src/slack-ui'
 import { QuizRecord } from '../../worker/quiz-store'
+import { blockText } from '../test-utils'
 
 /**
  * Rows written by the channel object before Effect, exactly as master stored
@@ -108,7 +110,9 @@ describe('QuizRecord rows stored before Effect', () => {
 
     const quiz = Effect.runSync(Quiz.fromSnapshot(record, noQuestions))
     expect(quiz.getUserScore('U-FAST')!.score).toBe(1)
-    expect(quiz.getUserScore('U-FAST')!.speedBonus).toBeCloseTo(0.75 * SPEED_BONUS_MAX, 5)
+    // 2.5 of the 10 second window gone: three quarters of the bonus left, and
+    // the only question asked, so the quiz total is the question's share.
+    expect(quiz.getUserScore('U-FAST')!.speedBonus).toBeCloseTo(0.75, 4)
     // The answer whose time was lost keeps its point but earns no bonus.
     expect(quiz.getUserScore('U-NAN')).toMatchObject({ score: 1, speedBonus: 0 })
   })
@@ -121,7 +125,12 @@ describe('QuizRecord rows stored before Effect', () => {
     const quiz = Effect.runSync(Quiz.fromSnapshot(record, noQuestions))
     expect(quiz.isActive()).toBe(false)
     expect(quiz.getUserScore('U-OLD')!.score).toBe(1)
-    expect(quiz.getUserScore('U-OLD')!.speedBonus).toBeCloseTo(0.8 * SPEED_BONUS_MAX, 5)
+    expect(quiz.getUserScore('U-OLD')!.speedBonus).toBeCloseTo(0.8, 5)
     expect(quiz.getRecap('U-OLD')).toHaveLength(1)
+    // The share comes from the stored timestamps, so an old row renders in the
+    // new percentage form with no migration.
+    expect(blockText(renderRecapModal(quiz.getRecap('U-OLD')).blocks[0])).toContain(
+      '⚡ 80% speed bonus',
+    )
   })
 })

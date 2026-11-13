@@ -36,7 +36,11 @@ export type UserScore = {
   userId: string;
   /** Whole points: one per correct answer. */
   score: number;
-  /** Kept apart from `score`: it only breaks ties on points. */
+  /**
+   * Share of the most speed bonus the quiz could have given, 0 to 1: the mean
+   * of every asked question's bonus, wrong and missed ones counting 0. Kept
+   * apart from `score`: it only breaks ties on points.
+   */
   speedBonus: number;
   totalAnswered: number;
 };
@@ -52,6 +56,7 @@ export type RecapQuestion = {
   options: RecapOption[];
   answered: boolean;
   points: number;
+  /** Share of the answer window left when answered correctly, 0 to 1. */
   speedBonus: number;
 };
 
@@ -211,7 +216,6 @@ export type QuizProgress = {
   total: number;
 };
 
-export const SPEED_BONUS_MAX = 0.2;
 export const MAX_QUESTIONS = 20;
 
 export type QuizzoArgs = { numQuestions: number; timeoutSecs: number };
@@ -502,10 +506,7 @@ export class Quiz {
   private speedBonus(question: Question, answeredAt: Date): number {
     const elapsed = getElapsedTime(question, answeredAt);
 
-    return Math.max(
-      0,
-      ((this.timeoutSecs - elapsed) / this.timeoutSecs) * SPEED_BONUS_MAX,
-    );
+    return Math.max(0, (this.timeoutSecs - elapsed) / this.timeoutSecs);
   }
 
   /** What a response earns: a point and a speed bonus if correct, else nothing. */
@@ -618,7 +619,12 @@ export class Quiz {
       }
     }
 
-    return Array.from(scores.values());
+    const asked = this.state.questions.length;
+
+    return Array.from(scores.values(), (score) => ({
+      ...score,
+      speedBonus: asked > 0 ? score.speedBonus / asked : 0,
+    }));
   }
 
   getUserScore(userId: string): UserScore | undefined {

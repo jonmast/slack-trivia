@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { AnyMessageBlock, AnyModalBlock } from 'slack-cloudflare-workers'
 import { Effect } from 'effect'
-import { Quiz, SPEED_BONUS_MAX, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
+import { Quiz, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
 import { renderRecapModal, renderFinalSummary } from '../src/slack-ui'
 import { blockText, createMockQuestions, createQuestionSource, findBlock, findBlocks } from './test-utils'
 
@@ -49,7 +49,7 @@ describe('Quiz.getRecap', () => {
 
     expect(entry.options.find((o) => o.correct)).toMatchObject({ selected: true })
     expect(entry.points).toBe(1)
-    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX / 2, 5)
+    expect(entry.speedBonus).toBeCloseTo(0.5, 5)
   })
 
   it('awards zero for a wrong answer', () => {
@@ -84,7 +84,7 @@ describe('Quiz.getRecap', () => {
     expect(entry.options.filter((o) => o.selected)).toHaveLength(1)
     expect(entry.options.find((o) => o.selected)!.correct).toBe(true)
     expect(entry.points).toBe(1)
-    expect(entry.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 5)
+    expect(entry.speedBonus).toBeCloseTo(1, 5)
   })
 
   it('still works after the quiz has ended', () => {
@@ -123,7 +123,7 @@ describe('renderRecapModal', () => {
       text: 'Right one?',
       answered: true,
       points: 1,
-      speedBonus: 0.16,
+      speedBonus: 0.75,
       options: [
         { text: 'A', selected: true, correct: true },
         { text: 'B', selected: false, correct: false },
@@ -168,15 +168,17 @@ describe('renderRecapModal', () => {
     expect(view.blocks.slice(2).every((b) => b.type === 'section')).toBe(true)
   })
 
-  it('summarises total points, the speed bonus apart from them, and questions answered', () => {
+  it('summarises total points, the quiz-wide speed bonus as a mean, and questions answered', () => {
     const view = renderRecapModal(recap)
-    expect(sectionText(view.blocks[0])).toBe('*1 pt* · ⚡ 0.16 speed bonus · 2/3 answered')
+    // 75% on the one correct answer averaged over all three questions, not the
+    // 75% a sum of the rows would give.
+    expect(sectionText(view.blocks[0])).toBe('*1 pt* · ⚡ 25% speed bonus · 2/3 answered')
   })
 
   it('marks a selected correct option with ✅ and leaves the rest plain', () => {
     const text = sectionText(renderRecapModal(recap).blocks[2])
     expect(text).toContain('*1. Right one?*')
-    expect(text).toContain('_1 pt · ⚡ 0.16_')
+    expect(text).toContain('_1 pt · ⚡ 75%_')
     expect(text).toContain('✅ A')
     expect(text).not.toContain('💡')
     expect(text).not.toContain('❌')
@@ -233,7 +235,7 @@ describe('renderFinalSummary leaderboard', () => {
   it('ranks by points, lists the speed bonus separately and says it only breaks ties', () => {
     const blocks = renderFinalSummary(
       [
-        { userId: 'U-SPEEDY', score: 9, speedBonus: 1.8, totalAnswered: 10 },
+        { userId: 'U-SPEEDY', score: 9, speedBonus: 0.9, totalAnswered: 10 },
         { userId: 'U-TIED-SLOW', score: 10, speedBonus: 0.04, totalAnswered: 10 },
         { userId: 'U-TIED-FAST', score: 10, speedBonus: 0.5, totalAnswered: 10 },
       ],
@@ -242,9 +244,9 @@ describe('renderFinalSummary leaderboard', () => {
     )
 
     expect(leaderboardText(blocks).split('\n').slice(1)).toEqual([
-      '1. <@U-TIED-FAST>: 10 points · ⚡ 0.50 · 10/10 answered',
-      '2. <@U-TIED-SLOW>: 10 points · ⚡ 0.04 · 10/10 answered',
-      '3. <@U-SPEEDY>: 9 points · ⚡ 1.80 · 10/10 answered',
+      '1. <@U-TIED-FAST>: 10 points · ⚡ 50% · 10/10 answered',
+      '2. <@U-TIED-SLOW>: 10 points · ⚡ 4% · 10/10 answered',
+      '3. <@U-SPEEDY>: 9 points · ⚡ 90% · 10/10 answered',
     ])
     expect(blocks[2]).toMatchObject({
       type: 'context',

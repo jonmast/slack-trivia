@@ -7,8 +7,9 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
-function speedBonus(bonus: number): string {
-  return `⚡ ${bonus.toFixed(2)}`
+/** A speed bonus share, 0 to 1, as a whole percentage. */
+function speedBonus(share: number): string {
+  return `⚡ ${Math.round(share * 100)}%`
 }
 
 export function optionLabel(text: string): string {
@@ -251,7 +252,10 @@ function recapPoints(entry: RecapQuestion): string {
 export function renderRecapModal(recap: RecapQuestion[]): ModalView {
   const answered = recap.filter((entry) => entry.answered).length
   const total = recap.reduce((sum, entry) => sum + entry.points, 0)
-  const totalBonus = recap.reduce((sum, entry) => sum + entry.speedBonus, 0)
+
+  // Every question counts towards the quiz's bonus, answered or not.
+  const totalBonus =
+    recap.length > 0 ? recap.reduce((sum, entry) => sum + entry.speedBonus, 0) / recap.length : 0
 
   return {
     type: "modal",

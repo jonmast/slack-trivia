@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { Effect, Option } from 'effect'
 import {
   Quiz,
-  SPEED_BONUS_MAX,
   parseQuizzoArgs,
   InvalidQuizzoArgsError,
   QuestionNotFoundError,
@@ -71,9 +70,9 @@ describe('Quiz answer rules', () => {
   it('scales the speed bonus by the configured timeout, not the default', () => {
     const quiz = new Quiz(store, 3, 20)
     const q = Effect.runSync(quiz.startQuiz())
-    // 15s into a 20s question: 25% of the window remains -> 25% of max bonus.
+    // 15s into a 20s question: 25% of the window remains, so 25% of the bonus.
     Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, new Date(q.timestamp.getTime() + 15_000)))
-    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(0.25 * SPEED_BONUS_MAX, 5)
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(0.25, 5)
   })
 
   it('keeps the speed bonus out of the points', () => {
@@ -81,7 +80,32 @@ describe('Quiz answer rules', () => {
     const q = Effect.runSync(quiz.startQuiz())
     Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, q.timestamp))
     expect(quiz.getUserScore('u1')!.score).toBe(1)
-    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(SPEED_BONUS_MAX, 5)
+    // An instant answer earns the whole bonus, and only one question was asked
+    // of the three configured.
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(1, 5)
+  })
+
+  it('averages the quiz bonus over every question asked, not just those answered', () => {
+    const quiz = new Quiz(store, 2, 10)
+    const q1 = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.nextQuestion())
+    Effect.runSync(quiz.submitAnswer('u1', q1.correctAnswer.id, q1.timestamp, q1.question.id))
+
+    // One instant correct answer out of two asked: half the maximum, with the
+    // unanswered question counting as zero rather than being skipped.
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(0.5, 5)
+  })
+
+  it('counts a wrong answer as zero in the quiz mean', () => {
+    const quiz = new Quiz(store, 2, 10)
+    const q1 = Effect.runSync(quiz.startQuiz())
+    const q2 = Effect.runSync(quiz.nextQuestion())
+    const wrong = (q: typeof q1) => q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
+    Effect.runSync(quiz.submitAnswer('u1', q1.correctAnswer.id, q1.timestamp, q1.question.id))
+    Effect.runSync(quiz.submitAnswer('u1', wrong(q2), q2.timestamp, q2.question.id))
+
+    expect(quiz.getUserScore('u1')).toMatchObject({ score: 1, totalAnswered: 2 })
+    expect(quiz.getUserScore('u1')!.speedBonus).toBeCloseTo(0.5, 5)
   })
 
   it('drops the bonus when a user changes a correct answer to a wrong one', () => {
@@ -98,7 +122,8 @@ describe('Quiz answer rules', () => {
     const q1 = Effect.runSync(quiz.startQuiz())
     const q2 = Effect.runSync(quiz.nextQuestion())
     const wrong = (q: typeof q1) => q.answers.find((a) => a.id !== q.correctAnswer.id)!.id
-    // Bonuses whose float sum, less each of them, is not exactly zero.
+    // Both questions answered correctly, then each changed: neither the point
+    // nor any part of the bonus it earned may linger in the quiz mean.
     Effect.runSync(quiz.submitAnswer('u1', q1.correctAnswer.id, new Date(q1.timestamp.getTime() + 1500), q1.question.id))
     Effect.runSync(quiz.submitAnswer('u1', q2.correctAnswer.id, new Date(q2.timestamp.getTime() + 400), q2.question.id))
     Effect.runSync(quiz.submitAnswer('u1', wrong(q1), new Date(q1.timestamp.getTime() + 3000), q1.question.id))
@@ -152,7 +177,11 @@ describe('Leaderboard ranking', () => {
     const [first, second] = quiz.getLeaderboard()
     expect(first).toMatchObject({ userId: 'steady', score: 10 })
     expect(second).toMatchObject({ userId: 'speedy', score: 9 })
-    expect(second.speedBonus).toBeGreaterThan(first.speedBonus + 1)
+    // Nearly every answer instant still cannot make up a point: the bonus is a
+    // share of the quiz, so a point is always worth more.
+    expect(second.speedBonus).toBeCloseTo(0.9, 5)
+    expect(first.speedBonus).toBeCloseTo(0.02, 5)
+    expect(second.speedBonus).toBeGreaterThan(first.speedBonus)
   })
 
   it('breaks a tie on points with the speed bonus', () => {

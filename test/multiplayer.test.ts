@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Effect } from 'effect'
-import { Quiz, SPEED_BONUS_MAX, QuizCompleteError, type QuestionSource } from '../src/trivia-core'
+import { Quiz, QuizCompleteError, type QuestionSource } from '../src/trivia-core'
 import { createQuestionSource, failureOf } from './test-utils'
 
 describe('Multiplayer functionality', () => {
@@ -47,11 +47,13 @@ describe('Multiplayer functionality', () => {
     const user3Score = scores.find(s => s.userId === 'user3')
 
     expect(user1Score?.score).toBe(1)
-    expect(user1Score?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
+    expect(user1Score?.speedBonus).toBeGreaterThan(0.9)
+    expect(user1Score?.speedBonus).toBeLessThanOrEqual(1)
     expect(user2Score?.score).toBe(0)
     expect(user2Score?.speedBonus).toBe(0)
     expect(user3Score?.score).toBe(1)
-    expect(user3Score?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
+    expect(user3Score?.speedBonus).toBeGreaterThan(0.9)
+    expect(user3Score?.speedBonus).toBeLessThanOrEqual(1)
   })
 
   it('should allow changing answer and update score accordingly', () => {
@@ -74,7 +76,8 @@ describe('Multiplayer functionality', () => {
     scores = quiz.getUserScores()
     userScore = scores.find(s => s.userId === 'user1')
     expect(userScore?.score).toBe(1)
-    expect(userScore?.speedBonus).toBeLessThanOrEqual(SPEED_BONUS_MAX)
+    expect(userScore?.speedBonus).toBeGreaterThan(0.9)
+    expect(userScore?.speedBonus).toBeLessThanOrEqual(1)
     expect(userScore?.totalAnswered).toBe(1)
   })
 
@@ -105,7 +108,7 @@ describe('Multiplayer functionality', () => {
 
     expect(leaderboard[0].userId).toBe('alice')
     expect(leaderboard.map((s) => s.score)).toEqual([2, 1, 1])
-    expect(leaderboard[0].speedBonus).toBeLessThanOrEqual(2 * SPEED_BONUS_MAX)
+    expect(leaderboard[0].speedBonus).toBeLessThanOrEqual(1)
   })
 
   it('should have a configurable maximum number of questions', () => {
@@ -177,9 +180,9 @@ describe('Multiplayer functionality', () => {
     
     expect(fastUserScore?.speedBonus).toBeGreaterThan(slowUserScore!.speedBonus)
     
-    expect(fastUserScore?.speedBonus).toBeCloseTo(4/5 * SPEED_BONUS_MAX, 2)
+    expect(fastUserScore?.speedBonus).toBeCloseTo(4/5, 2)
     
-    expect(slowUserScore?.speedBonus).toBeCloseTo(1/5 * SPEED_BONUS_MAX, 2)
+    expect(slowUserScore?.speedBonus).toBeCloseTo(1/5, 2)
   })
 
   it('should not award speed bonus for incorrect answers', () => {

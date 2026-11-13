@@ -4,7 +4,6 @@ import {
   Quiz,
   QuizCompleteError,
   QuizSnapshot,
-  SPEED_BONUS_MAX,
   InvalidQuizSnapshotError,
   QuestionsExhaustedError,
   UnsupportedSnapshotVersionError,
@@ -162,9 +161,12 @@ describe('Quiz snapshot', () => {
       // u1 keeps q1's point and bonus and nothing from q2.
       expect(recap[1]).toMatchObject({ points: 0, speedBonus: 0 })
       expect(instance.getUserScore('u1')!.score).toBe(1)
-      expect(instance.getUserScore('u1')!.speedBonus).toBeCloseTo(recap[0].speedBonus, 10)
+      // u1's quiz bonus is q1's share averaged with the zero from the answer it
+      // changed on q2.
+      expect(instance.getUserScore('u1')!.speedBonus).toBeCloseTo(recap[0].speedBonus / 2, 10)
       expect(instance.getUserScore('u2')!.score).toBe(1)
-      expect(instance.getUserScore('u2')!.speedBonus).toBeCloseTo(0.99 * SPEED_BONUS_MAX, 10)
+      // u2 earned almost all of q2's bonus and none of q1's, which it got wrong.
+      expect(instance.getUserScore('u2')!.speedBonus).toBeCloseTo(0.495, 10)
     }
   })
 
