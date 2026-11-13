@@ -15,6 +15,10 @@ _Avoid_: player, member
 **Question**:
 One multiple-choice prompt with four options, exactly one of which is correct, with an answer window of a fixed number of seconds.
 
+**Screening**:
+Judging a question fetched for a quiz before it can be asked, and rejecting it if it is misleading, garbled or otherwise unfit. A rejected question is never shown; the quiz draws another in its place. When screening cannot be done at all, questions are asked unscreened rather than holding up the quiz.
+_Avoid_: filtering, moderation, validation
+
 **Answer window**:
 The seconds from a question being posted during which an answer earns a speed bonus. It is soft: an answer arriving after it still counts for the base point, with no bonus, at any time until the quiz is finished, so Slack delivery lag never costs a participant their answer. Its end is also the absolute deadline the channel object sets an alarm for; when that alarm fires, results replace the question.
 _Avoid_: deadline, cutoff, timeout
@@ -39,7 +43,7 @@ _Avoid_: review, results, scorecard, answer sheet
 One for each correct answer, whenever it arrives before the quiz is finished. The only thing participants are ranked by.
 
 **Speed bonus**:
-A tie-breaker earned by a correct answer, larger the more of the answer window was left when it was given. It is not points and never adds to them: it only orders participants with equal points, and is always shown apart from them.
+A tie-breaker earned by a correct answer, larger the more of the answer window was left when it was given. Shown as a percentage of the most a participant could have earned: for a question, 100% is a correct answer the instant it appeared; for a quiz, 100% is every question answered that way, so wrong and missed questions count as 0%. It is not points and never adds to them: it only orders participants with equal points, and is always shown apart from them.
 _Avoid_: bonus points
 
 **Channel object**:
