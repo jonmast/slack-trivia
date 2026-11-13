@@ -3,6 +3,8 @@ import type { Env } from '../../worker/env'
 
 declare module 'cloudflare:test' {
   interface ProvidedEnv extends Env {
+    /** Always bound in tests; `wrangler.jsonc` binds it. */
+    DB: D1Database
     /** `./migrations`, read by vitest.config.ts and applied before each test file. */
     TEST_MIGRATIONS: D1Migration[]
   }

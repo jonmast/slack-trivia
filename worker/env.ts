@@ -4,8 +4,8 @@ import type { ChannelObject } from "./channel-object";
 export type Env = SlackEdgeAppEnv & {
   CHANNEL_OBJECT: DurableObjectNamespace<ChannelObject>;
   ASSETS: Fetcher;
-  /** Every screening verdict, shared by all channels. */
-  DB: D1Database;
+  /** Every screening verdict, shared by all channels; screening runs without it. */
+  DB?: D1Database;
   /** OpenCode Console API key for Jev; questions go unscreened without it. */
   OPENCODE_API_KEY?: string;
   /**

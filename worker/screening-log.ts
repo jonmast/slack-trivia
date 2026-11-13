@@ -1,11 +1,21 @@
 import { Clock, Context, Effect, Layer } from "effect";
 import type { Verdict } from "./screening";
 
-/** The D1 database every channel records its screening verdicts in. */
+/**
+ * The D1 database every channel records its screening verdicts in; absent
+ * when the binding is missing, which fails only the recording.
+ */
 export class ScreeningDatabase extends Context.Service<
   ScreeningDatabase,
-  D1Database
+  D1Database | undefined
 >()("slack-trivia/worker/ScreeningDatabase") {}
+
+const INSERT_SCREENING = `
+  INSERT INTO screenings (
+    question_id, channel_id, message_ts, question, options,
+    correct_answer, outcome, class, probabilities, model, screened_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
 
 /** Where a quiz's verdicts belong: its channel and the message it is played in. */
 export type ScreeningQuiz = {
@@ -31,13 +41,6 @@ export class ScreeningLog extends Context.Service<
     ScreeningLog,
     Effect.gen(function* () {
       const db = yield* ScreeningDatabase;
-
-      const insert = db.prepare(`
-        INSERT INTO screenings (
-          question_id, channel_id, message_ts, question, options,
-          correct_answer, outcome, class, probabilities, model, screened_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
 
       return ScreeningLog.of({
         record: Effect.fn("ScreeningLog.record")(function* (quiz, verdicts) {
@@ -65,8 +68,12 @@ export class ScreeningLog extends Context.Service<
             ),
           );
 
-          yield* Effect.tryPromise(() =>
-            db.batch(
+          yield* Effect.tryPromise(() => {
+            if (!db) throw new Error("The DB binding is missing");
+
+            const insert = db.prepare(INSERT_SCREENING);
+
+            return db.batch(
               rows.map((row) =>
                 insert.bind(
                   row.questionId,
@@ -82,8 +89,8 @@ export class ScreeningLog extends Context.Service<
                   row.screenedAt,
                 ),
               ),
-            ),
-          ).pipe(
+            );
+          }).pipe(
             Effect.catch((error) =>
               Effect.logError("Failed to record screening verdicts:", error),
             ),

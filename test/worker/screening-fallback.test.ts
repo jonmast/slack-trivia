@@ -1,6 +1,6 @@
 import { env, fetchMock, runInDurableObject } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import type { ChannelObject } from '../../worker/channel-object'
+import { ChannelObject } from '../../worker/channel-object'
 import {
   JEV_AUTH_HEADERS,
   JEV_ORIGIN,
@@ -131,6 +131,33 @@ describe('screening that cannot be done or recorded', () => {
   ])('asks questions unscreened when Jev answers with %s', async (_case, body) => {
     interceptJev(200, body)
     await expectUnscreenedQuiz('C-JEV-UNUSABLE')
+  })
+
+  it('keeps the channel object working when the DB binding is missing', async () => {
+    const error = vi.spyOn(console, 'error')
+    interceptJev(500, JSON.stringify({ error: 'internal' }))
+    interceptTrivia(createTriviaQuestions(4))
+
+    const stub = channelObject('C-NO-DB')
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      const unbound = new ChannelObject(state, { ...env, DB: undefined })
+      const result = await unbound.startQuiz('C-NO-DB', `2 ${LONG_WINDOW}`, COUNTDOWN_ORIGIN)
+
+      expect(result.ok).toBe(true)
+      expect(unbound.hasRunningQuiz()).toBe(true)
+      expect(unbound.getChannelId()).toBe('C-NO-DB')
+      // No question is up yet, so the answer is ignored, but the call works.
+      expect(() => unbound.submitAnswer('U1', 'a1', 'q-1', Date.now())).not.toThrow()
+    })
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('The DB binding is missing'))
+    error.mockRestore()
+    expect(await screeningRows('C-NO-DB')).toEqual([])
+
+    await waitForCalls(slack, 2)
+    expect(headerText(slack.updates[0].blocks)).toBe('Question 1/2:')
+    await dropScheduledAlarm(stub)
   })
 
   it('carries on when the verdicts cannot be recorded', async () => {
