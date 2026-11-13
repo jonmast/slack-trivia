@@ -282,6 +282,7 @@ export function renderRecapModal(recap: RecapQuestion[]): ModalView {
           text: [
             `*${index + 1}. ${entry.text}*  _${recapPoints(entry)}_`,
             ...entry.options.map((option) => `${recapMarker(option)} ${option.text}`),
+            `_ID: \`${entry.id}\`_`,
           ].join("\n"),
         },
       })),

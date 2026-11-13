@@ -22,6 +22,7 @@ describe('Quiz.getRecap', () => {
     const recap = quiz.getRecap('u1')
 
     expect(recap).toHaveLength(3)
+    expect(recap.map((entry) => entry.id)).toEqual(['test-1', 'test-2', 'test-3'])
     expect(recap[0].text).toBe(q1.question.question.text)
     expect(recap[1].text).toBe(q2.question.question.text)
     expect(recap[0].options.map((o) => o.text)).toEqual(q1.answers.map((a) => a.text))
@@ -120,6 +121,7 @@ describe('Quiz.getRecap', () => {
 describe('renderRecapModal', () => {
   const recap: RecapQuestion[] = [
     {
+      id: 'trivia-1',
       text: 'Right one?',
       answered: true,
       points: 1,
@@ -132,6 +134,7 @@ describe('renderRecapModal', () => {
       ],
     },
     {
+      id: 'trivia-2',
       text: 'Wrong one?',
       answered: true,
       points: 0,
@@ -144,6 +147,7 @@ describe('renderRecapModal', () => {
       ],
     },
     {
+      id: 'trivia-3',
       text: 'Skipped one?',
       answered: false,
       points: 0,
@@ -166,6 +170,22 @@ describe('renderRecapModal', () => {
     expect(view.title.text.length).toBeLessThanOrEqual(24)
     expect(view.blocks).toHaveLength(2 + recap.length)
     expect(view.blocks.slice(2).every((b) => b.type === 'section')).toBe(true)
+  })
+
+  it('ends each question section with its Trivia API ID', () => {
+    const questionBlocks = renderRecapModal(recap).blocks.slice(2)
+
+    expect(questionBlocks.map((block) => sectionText(block).split('\n').at(-1))).toEqual([
+      '_ID: `trivia-1`_',
+      '_ID: `trivia-2`_',
+      '_ID: `trivia-3`_',
+    ])
+  })
+
+  it('keeps a full quiz within the modal block limit', () => {
+    const fullQuiz = Array.from({ length: 20 }, (_, i) => ({ ...recap[0], id: `trivia-${i + 1}` }))
+
+    expect(renderRecapModal(fullQuiz).blocks.length).toBeLessThanOrEqual(100)
   })
 
   it('summarises total points, the quiz-wide speed bonus as a mean, and questions answered', () => {

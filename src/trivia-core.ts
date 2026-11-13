@@ -52,6 +52,8 @@ export type RecapOption = {
 };
 
 export type RecapQuestion = {
+  /** The Trivia API's ID for the question, so a bad one can be reported. */
+  id: string;
   text: string;
   options: RecapOption[];
   answered: boolean;
@@ -566,6 +568,7 @@ export class Quiz {
       const earned = response ? this.earned(question, response) : NOTHING_EARNED;
 
       return {
+        id: question.question.id,
         text: question.question.question.text,
         options: question.answers.map((answer) => ({
           text: answer.text,
