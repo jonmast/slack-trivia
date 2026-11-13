@@ -32,8 +32,9 @@ const Phase = Schema.Literals([
  * fires).
  *
  * `pending` holds the questions fetched at start while they are screened,
- * and only the ones cleared to be asked from then on. `extendedUntil` is when
- * an extended ready screen stops looking.
+ * and only the ones cleared to be asked from then on. `screened` holds the
+ * IDs of every question screened for the quiz, so an extended ready screen
+ * never screens one twice; `extendedUntil` is when it stops looking.
  */
 export const QuizRecord = Schema.Struct({
   ...QuizSnapshot.fields,
@@ -41,6 +42,7 @@ export const QuizRecord = Schema.Struct({
   deadline: Schema.Number,
   pending: Schema.Array(TriviaQuestion),
   origin: Schema.String,
+  screened: Schema.optionalKey(Schema.Array(Schema.String)),
   extendedUntil: Schema.optionalKey(Schema.Number),
 });
 

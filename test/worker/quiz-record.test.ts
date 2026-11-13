@@ -96,6 +96,8 @@ describe('QuizRecord rows stored before Effect', () => {
     const record = decodeRow(RUNNING_ROW)
 
     expect(record.phase).toBe('question')
+    // Stored before screening: nothing was screened for it.
+    expect(record).not.toHaveProperty('screened')
     expect(record.pending.map((question) => question.id)).toEqual([
       '622a1c357cc59eab6f94f2',
       '622a1c357cc59eab6f94f3',

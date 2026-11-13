@@ -432,6 +432,7 @@ const screen = Effect.fn("screen")(function* (messageTs: string) {
     ...after.value,
     phase: "ready",
     pending: askable(verdicts),
+    screened: candidates.map((question) => question.id),
   });
 
   // A no-op while the countdown runs; when the ready alarm is the one
@@ -544,7 +545,7 @@ const settle = Effect.fn("settle")(function* (
 /**
  * One more search on an extended ready screen: fetch and screen enough
  * questions to cover the shortfall twice over, skipping any already
- * waiting to be asked, then start the quiz if they do, or search again shortly. Once
+ * screened, then start the quiz if they do, or search again shortly. Once
  * the extended ready screen has run its course, settle for what passed; a
  * search still under way then is abandoned.
  *
@@ -565,7 +566,10 @@ const search = Effect.fn("search")(function* (
 
   const quiz = yield* screeningQuiz(messageTs);
 
-  const known = new Set(record.pending.map((question) => question.id));
+  const known = new Set([
+    ...(record.screened ?? []),
+    ...record.pending.map((question) => question.id),
+  ]);
 
   const verdicts = yield* (yield* TriviaApi)
     .fetchQuestions(shortfall(record) * CANDIDATES_PER_QUESTION)
@@ -593,6 +597,7 @@ const search = Effect.fn("search")(function* (
   const found = {
     ...record,
     pending: [...record.pending, ...askable(verdicts)],
+    screened: [...known, ...verdicts.map(({ question }) => question.id)],
   };
 
   yield* store.save(messageTs, found);

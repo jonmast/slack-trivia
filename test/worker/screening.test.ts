@@ -36,18 +36,20 @@ const slack = new SlackRecorder()
 const jev = new JevFake()
 
 /**
- * The Trivia API, serving as many fresh questions as each request asks for;
- * `failStatus` and `delayMs` pick requests, by their index in `limits`, to
- * fail or slow down.
+ * The Trivia API, serving as many fresh questions as each request asks for,
+ * or the IDs `ids` picks; `failStatus` and `delayMs` pick requests, by their
+ * index in `limits`, to fail or slow down.
  */
 class TriviaFake {
   limits: number[] = []
+  ids: (index: number) => string[] | null = () => null
   failStatus: (index: number) => number | null = () => null
   delayMs: (index: number) => number = () => 0
   private served = 0
 
   reset(): void {
     this.limits = []
+    this.ids = () => null
     this.failStatus = () => null
     this.delayMs = () => 0
     this.served = 0
@@ -66,11 +68,13 @@ class TriviaFake {
 
         if (status) return { statusCode: status, data: { error: 'unavailable' } }
 
-        const ids = Array.from({ length: limit }, () => {
-          this.served += 1
+        const ids =
+          this.ids(index) ??
+          Array.from({ length: limit }, () => {
+            this.served += 1
 
-          return `t${this.served}`
-        })
+            return `t${this.served}`
+          })
 
         const questions = createTriviaQuestions(ids.length).map(
           (question, i): TriviaApiQuestion => ({
@@ -341,6 +345,30 @@ describe('screening questions with Jev', () => {
     jev.reset()
     const restart = await start('C-NONE', `2 ${LONG_WINDOW}`)
     await dropScheduledAlarm(restart)
+  })
+
+  it('never screens a question twice for one quiz', async () => {
+    jev.judge = passFirstAndLater(4)
+    // The search is served one question screened at start and one new one.
+    trivia.ids = (index) => (index === 1 ? ['t2', 't5'] : null)
+
+    const stub = await start('C-DEDUPE', `2 ${LONG_WINDOW}`)
+
+    // ready, extended ready screen, first question
+    await waitForCalls(slack, 3)
+    expect(headerText(slack.updates[1].blocks)).toBe('Question 1/2:')
+
+    expect(jev.requests).toHaveLength(2)
+    expect(jev.items.map(itemQuestionId)).toEqual(['t1', 't2', 't3', 't4', 't5'])
+    expect((await screeningRows('C-DEDUPE')).map((row) => row.question_id)).toEqual([
+      't1',
+      't2',
+      't3',
+      't4',
+      't5',
+    ])
+
+    await dropScheduledAlarm(stub)
   })
 
   it('asks the questions a search found unscreened when Jev fails then', async () => {
