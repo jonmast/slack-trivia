@@ -11,8 +11,10 @@ import {
 } from "./channel-quiz";
 import { WorkerConfig } from "./config";
 import type { Env } from "./env";
+import { Jev } from "./jev";
 import { WorkerLogger } from "./logger";
 import { ChannelStorage, QuizStore } from "./quiz-store";
+import { ScreeningDatabase, ScreeningLog } from "./screening-log";
 import { SlackClient } from "./slack-client";
 import { TriviaApi } from "./trivia-api";
 
@@ -20,6 +22,7 @@ import { TriviaApi } from "./trivia-api";
 function channelLayer(ctx: DurableObjectState, env: Env) {
   const platform = Layer.mergeAll(
     Layer.succeed(ChannelStorage)(ctx.storage),
+    Layer.succeed(ScreeningDatabase)(env.DB),
     FetchHttpClient.layer,
     ConfigProvider.layer(ConfigProvider.fromUnknown(env)),
   );
@@ -30,9 +33,11 @@ function channelLayer(ctx: DurableObjectState, env: Env) {
     QuizStore.layer,
     TriviaApi.layer,
     SlackClient.layer.pipe(Layer.provide(config)),
+    Jev.layer.pipe(Layer.provide(config)),
+    ScreeningLog.layer,
     config,
     WorkerLogger,
-    // Slack and The Trivia API are not part of our traces: no trace headers.
+    // Slack, The Trivia API and Jev are not part of our traces: no trace headers.
     Layer.succeed(HttpClient.TracerPropagationEnabled)(false),
   ).pipe(Layer.provide(platform));
 }
@@ -44,7 +49,7 @@ function channelLayer(ctx: DurableObjectState, env: Env) {
  */
 export class ChannelObject extends DurableObject<Env> {
   private readonly runtime: ManagedRuntime.ManagedRuntime<
-    QuizStore | TriviaApi | SlackClient | WorkerConfig,
+    QuizStore | TriviaApi | SlackClient | WorkerConfig | Jev | ScreeningLog,
     Config.ConfigError
   >;
 

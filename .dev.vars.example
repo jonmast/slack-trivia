@@ -1,4 +1,6 @@
 # Copy to .dev.vars (gitignored); production values are set with `wrangler secret put`.
 SLACK_SIGNING_SECRET=
 SLACK_BOT_TOKEN=
+# OpenCode Console API key for Jev screening; without it questions go unscreened.
+OPENCODE_API_KEY=
 SLACK_LOGGING_LEVEL=DEBUG

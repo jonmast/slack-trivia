@@ -1,4 +1,4 @@
-import { defineWorkersProject } from '@cloudflare/vitest-pool-workers/config'
+import { defineWorkersProject, readD1Migrations } from '@cloudflare/vitest-pool-workers/config'
 import { defineConfig } from 'vitest/config'
 
 // Wrangler loads a local `.env` as dev vars, and every key the bindings below
@@ -19,10 +19,12 @@ export default defineConfig({
         },
       },
       // The channel Durable Object runs in the real Workers runtime.
-      defineWorkersProject({
+      defineWorkersProject(async () => ({
         test: {
           name: 'worker',
           include: ['test/worker/**/*.test.ts'],
+          // Creates the `screenings` table from ./migrations in each test file's D1.
+          setupFiles: ['./test/worker/apply-migrations.ts'],
           // Alarm-driven tests wait out real answer windows.
           testTimeout: 20_000,
           poolOptions: {
@@ -36,12 +38,18 @@ export default defineConfig({
                   // to a few seconds of real time.
                   RESULTS_SECS: '1',
                   READY_SECS: '1',
+                  OPENCODE_API_KEY: 'test-opencode-key',
+                  // Short enough that a Jev timeout and an extended ready
+                  // screen each take a few seconds of real time.
+                  JEV_TIMEOUT_MS: '300',
+                  EXTENDED_READY_SECS: '3',
+                  TEST_MIGRATIONS: await readD1Migrations('./migrations'),
                 },
               },
             },
           },
         },
-      }),
+      })),
     ],
   },
 })

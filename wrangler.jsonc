@@ -22,11 +22,22 @@
       "new_sqlite_classes": ["ChannelObject"]
     }
   ],
+  // Every screening verdict, shared by all channels. Schema in ./migrations.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slack-trivia",
+      // Placeholder: replace with the ID `wrangler d1 create` prints.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
   // Countdown GIFs are pre-rendered into ./public at build time and served
   // from the same origin as the Slack request URL.
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
   }
-  // SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET are set with `wrangler secret put`.
+  // SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET and OPENCODE_API_KEY are set with
+  // `wrangler secret put`.
 }
