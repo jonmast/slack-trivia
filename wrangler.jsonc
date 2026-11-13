@@ -27,8 +27,7 @@
     {
       "binding": "DB",
       "database_name": "slack-trivia",
-      // Placeholder: replace with the ID `wrangler d1 create` prints.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "9fb5de5a-f2b0-486a-8f15-3e04a7d0a15e",
       "migrations_dir": "migrations"
     }
   ],

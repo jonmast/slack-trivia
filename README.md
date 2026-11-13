@@ -67,10 +67,9 @@ wrangler secret put SLACK_SIGNING_SECRET
 wrangler secret put OPENCODE_API_KEY   # an OpenCode Console API key, for Jev
 ```
 
-The screening record needs a D1 database, created once. `wrangler.jsonc` binds it as `DB` with a placeholder `database_id`: replace it with the ID `create` prints, then apply the schema, and apply it again whenever `migrations/` gains a file:
+The screening record lives in the D1 database `slack-trivia`, bound as `DB` in `wrangler.jsonc`. Apply the schema whenever `migrations/` gains a file:
 
 ```bash
-wrangler d1 create slack-trivia
 wrangler d1 migrations apply slack-trivia --remote
 ```
 
