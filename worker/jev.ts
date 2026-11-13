@@ -7,8 +7,8 @@ const JEV_URL = "https://opencode.ai/inference/systemone/v1/systemone";
 const CHOICE_TASK = "Which class does this item belong to?";
 
 /**
- * Jev could not classify: no API key, no answer in time, an HTTP error, or a
- * reply that does not decode.
+ * Jev could not classify: no API key, no answer in time, an HTTP error, a
+ * reply that does not decode, or one with no usable answer for any item.
  */
 export class JevUnavailableError extends Schema.TaggedError<JevUnavailableError>()(
   "JevUnavailableError",
@@ -34,21 +34,27 @@ export type JevChoice = {
 export type JevClassification = {
   /** The model that answered. */
   readonly model: string;
-  /** One per item, in order; none where Jev left an item unanswered. */
+  /**
+   * One per item, in order; none where Jev's answer for an item is missing
+   * or unusable. At least one is some.
+   */
   readonly choices: ReadonlyArray<Option.Option<JevChoice>>;
 };
 
-const ChoiceAnswer = Schema.Struct({
-  choice: Schema.String,
-  probabilities: Schema.Record(Schema.String, Schema.Number),
-});
-
+/** Answers are decoded one by one, so one malformed answer spoils only its item. */
 const ClassifyReply = Schema.Struct({
   model: Schema.optional(Schema.String),
-  answers: Schema.Record(Schema.String, ChoiceAnswer),
+  answers: Schema.Record(Schema.String, Schema.Unknown),
 });
 
 const decodeReply = Schema.decodeUnknownEffect(ClassifyReply);
+
+const decodeAnswer = Schema.decodeUnknownOption(
+  Schema.Struct({
+    choice: Schema.String,
+    probabilities: Schema.Record(Schema.String, Schema.Finite),
+  }),
+);
 
 /** Wire IDs for classes and items: Jev's keys, never shown to anyone. */
 const classId = (index: number) => `c${index}`;
@@ -118,27 +124,35 @@ export class Jev extends Context.Service<
             const reply = yield* decodeReply(yield* response.json);
             const names = new Map(classes.map(({ name }, index) => [classId(index), name]));
 
-            const choiceFor = (index: number): Option.Option<JevChoice> => {
-              const answer = reply.answers[itemId(index)];
-              const choice = answer && names.get(answer.choice);
+            // An answer is usable when it picks one of our classes and gives
+            // that class's probability.
+            const choiceFor = (index: number): Option.Option<JevChoice> =>
+              Option.flatMap(
+                decodeAnswer(reply.answers[itemId(index)]),
+                (answer) => {
+                  const choice = names.get(answer.choice);
 
-              if (!answer || !choice) return Option.none();
+                  const probabilities = new Map(
+                    Object.entries(answer.probabilities).flatMap(([id, p]) => {
+                      const name = names.get(id);
 
-              const probabilities = new Map(
-                Object.entries(answer.probabilities).flatMap(([id, p]) => {
-                  const name = names.get(id);
+                      return name ? [[name, p] as const] : [];
+                    }),
+                  );
 
-                  return name ? [[name, p] as const] : [];
-                }),
+                  return choice && probabilities.has(choice)
+                    ? Option.some({ choice, probabilities })
+                    : Option.none();
+                },
               );
 
-              return Option.some({ choice, probabilities });
-            };
+            const choices = items.map((_, index) => choiceFor(index));
 
-            return {
-              model: reply.model ?? jevModel,
-              choices: items.map((_, index) => choiceFor(index)),
-            };
+            if (!choices.some(Option.isSome)) {
+              return yield* Effect.fail("Jev's reply has no usable answer");
+            }
+
+            return { model: reply.model ?? jevModel, choices };
           },
           Effect.timeout(Duration.millis(jevTimeoutMs)),
           Effect.mapError((cause) => new JevUnavailableError({ cause })),

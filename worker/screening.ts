@@ -70,14 +70,21 @@ export function screeningItem(question: TriviaQuestion): string {
   ].join("\n");
 }
 
+const unscreened = (question: TriviaQuestion): Verdict => ({
+  question,
+  outcome: "unscreened",
+  screeningClass: null,
+  probabilities: null,
+  model: null,
+});
+
+/** A question Jev gave no usable answer for is unscreened, not rejected. */
 function judge(
   question: TriviaQuestion,
   model: string,
   choice: Option.Option<JevChoice>,
 ): Verdict {
-  if (Option.isNone(choice)) {
-    return { question, outcome: "rejected", screeningClass: null, probabilities: null, model };
-  }
+  if (Option.isNone(choice)) return unscreened(question);
 
   const { choice: screeningClass, probabilities } = choice.value;
 
@@ -93,14 +100,6 @@ function judge(
     model,
   };
 }
-
-const unscreened = (question: TriviaQuestion): Verdict => ({
-  question,
-  outcome: "unscreened",
-  screeningClass: null,
-  probabilities: null,
-  model: null,
-});
 
 /**
  * Screen `candidates` with Jev in one request and record every verdict. When

@@ -48,6 +48,17 @@ function dropScheduledAlarm(stub: DurableObjectStub<ChannelObject>): Promise<voi
   return runInDurableObject(stub, (_instance, state) => state.storage.deleteAlarm())
 }
 
+/** One answer as Jev's wire format has it, class IDs and all. */
+type WireAnswer = { choice: string; probabilities: { [classId: string]: number } }
+
+/** A Jev reply with `answer` for every item of a four-question request, keyed by `key`. */
+function replyFor(key: (index: number) => string, answer: WireAnswer): string {
+  return JSON.stringify({
+    model: 'jev-1.13',
+    answers: Object.fromEntries([0, 1, 2, 3].map((i) => [key(i), answer])),
+  })
+}
+
 /** Start a two-question quiz on four fetched questions and see it ask the first. */
 async function expectUnscreenedQuiz(channelId: string): Promise<void> {
   const warn = vi.spyOn(console, 'warn')
@@ -110,6 +121,16 @@ describe('screening that cannot be done or recorded', () => {
   it('asks questions unscreened when Jev does not answer in time', async () => {
     interceptJev(200, JSON.stringify({ model: 'jev-1.13', answers: {} }), 2000)
     await expectUnscreenedQuiz('C-JEV-SLOW')
+  })
+
+  it.each([
+    ['no answers', JSON.stringify({ model: 'jev-1.13', answers: {} })],
+    ['answers keyed by something else', replyFor((i) => `q-${i + 1}`, { choice: 'c0', probabilities: { c0: 0.95 } })],
+    ['choices that are not its classes', replyFor((i) => `i${i}`, { choice: 'good', probabilities: { good: 0.95 } })],
+    ['probabilities keyed by class name', replyFor((i) => `i${i}`, { choice: 'c0', probabilities: { good: 0.95 } })],
+  ])('asks questions unscreened when Jev answers with %s', async (_case, body) => {
+    interceptJev(200, body)
+    await expectUnscreenedQuiz('C-JEV-UNUSABLE')
   })
 
   it('carries on when the verdicts cannot be recorded', async () => {

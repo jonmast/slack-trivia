@@ -157,8 +157,7 @@ describe('screening questions with Jev', () => {
     await dropScheduledAlarm(stub)
   })
 
-  it('records a row for every verdict', async () => {
-    // t2 goes unanswered, which rejects it too.
+  it('records a row for every verdict, unscreened where Jev gave no answer', async () => {
     jev.judge = (item) =>
       itemQuestionId(item) === 't1' ? verdict('good', 0.95) : undefined
 
@@ -181,12 +180,13 @@ describe('screening questions with Jev', () => {
     expect(JSON.parse(rows[0].probabilities!)).toEqual(verdict('good', 0.95).probabilities)
     expect(Number.isNaN(Date.parse(rows[0].screened_at))).toBe(false)
 
+    // Jev left t2 unanswered: it was not screened, so it may still be asked.
     expect(rows[1]).toMatchObject({
       question_id: 't2',
-      outcome: 'rejected',
+      outcome: 'unscreened',
       class: null,
       probabilities: null,
-      model: 'jev-1.13',
+      model: null,
     })
 
     await dropScheduledAlarm(stub)
