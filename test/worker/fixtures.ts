@@ -56,6 +56,7 @@ export type SlackCall = SlackMessageBody & {
 /** A reply the Worker posts to a command's or button's `response_url`. */
 export type SlackResponse = {
   response_type?: string
+  replace_original?: boolean
   text?: string
 }
 
@@ -87,6 +88,7 @@ const decodeSlackResponse = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
       response_type: Schema.optional(Schema.String),
+      replace_original: Schema.optional(Schema.Boolean),
       text: Schema.optional(Schema.String),
     }),
   ),

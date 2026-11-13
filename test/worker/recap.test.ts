@@ -207,26 +207,37 @@ describe('recap button', () => {
     expect(older.ephemeral()).toBeUndefined()
 
     // ...and it is the existing recap renderer's modal, unchanged.
-    const recap = await channelObject(CHANNEL).getRecap(PARTICIPANT, olderTs)
-    expect(older.modal()?.view).toEqual(JSON.parse(JSON.stringify(renderRecapModal(recap!))))
+    const lookup = await channelObject(CHANNEL).getRecap(PARTICIPANT, olderTs)
+
+    if (!lookup.found) throw new Error(`expected a recap, got ${lookup.reason}`)
+
+    expect(older.modal()?.view).toEqual(JSON.parse(JSON.stringify(renderRecapModal(lookup.recap))))
   })
 
-  it('tells a non-participant the recap is no longer available', async () => {
+  it('tells a non-participant they have no recap, leaving the summary in place', async () => {
     const messageTs = await playQuiz('Solo')
 
     const clicked = await clickRecap(BYSTANDER, messageTs)
 
     expect(clicked.modal()).toBeUndefined()
     expect(clicked.ephemeral()?.response_type).toBe('ephemeral')
-    expect(clicked.ephemeral()?.text).toBe("That quiz's recap is no longer available.")
+    expect(clicked.ephemeral()?.replace_original).toBe(false)
+    expect(clicked.ephemeral()?.text).toBe(
+      "You didn't answer any questions in that quiz, so there's no recap for you.",
+    )
+
+    // The summary is untouched, so the participant can still open theirs.
+    const participant = await clickRecap(PARTICIPANT, messageTs)
+    expect(participant.modal()?.view.title.text).toBe('Your recap')
   })
 
-  it('tells a participant with an unknown message timestamp the same', async () => {
+  it('tells a participant with an unknown message timestamp the recap is unavailable', async () => {
     await playQuiz('Known')
 
     const clicked = await clickRecap(PARTICIPANT, '1111111111.9999')
 
     expect(clicked.modal()).toBeUndefined()
+    expect(clicked.ephemeral()?.replace_original).toBe(false)
     expect(clicked.ephemeral()?.text).toBe("That quiz's recap is no longer available.")
   })
 })

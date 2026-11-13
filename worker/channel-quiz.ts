@@ -4,6 +4,7 @@ import {
   Quiz,
   parseQuizzoArgs,
   type QuestionSource,
+  type RecapQuestion,
   type TriviaQuestion,
 } from "../src/trivia-core";
 import {
@@ -191,34 +192,42 @@ export const submitAnswer = Effect.fn("submitAnswer")(
 );
 
 /**
+ * A recap, or why there is none: the user never answered in that quiz, or
+ * there is no readable finished quiz hosted by that message.
+ */
+export type RecapLookup =
+  | { found: true; recap: RecapQuestion[] }
+  | { found: false; reason: "not-participant" | "unavailable" };
+
+const UNAVAILABLE: RecapLookup = { found: false, reason: "unavailable" };
+
+/**
  * A participant's recap of the finished quiz hosted by `messageTs`.
  *
  * The lookup is by the quiz row's primary key — the timestamp of the message
  * the quiz was played in, which is what the summary's Recap button carries —
  * never by "the channel's latest quiz", so an old summary opens the quiz it
  * belongs to. Rows are never deleted, so those buttons keep working.
- *
- * Returns null when no finished quiz is hosted by that message, and when the
- * user never answered in it: neither has a recap to show. A stored quiz that
- * can no longer be read has none either.
  */
 export const getRecap = Effect.fn("getRecap")(
   function* (userId: string, messageTs: string) {
     const record = yield* (yield* QuizStore).loadFinished(messageTs);
 
-    if (Option.isNone(record)) return null;
+    if (Option.isNone(record)) return UNAVAILABLE;
 
     const quiz = yield* restore(record.value, [...record.value.pending]);
 
-    if (!quiz.getUserScore(userId)) return null;
+    if (!quiz.getUserScore(userId)) {
+      return { found: false, reason: "not-participant" } satisfies RecapLookup;
+    }
 
-    return quiz.getRecap(userId);
+    return { found: true, recap: quiz.getRecap(userId) } satisfies RecapLookup;
   },
   (effect, _userId, messageTs) =>
     effect.pipe(
       Effect.catch((error) =>
         Effect.logError(`Failed to load the recap for ${messageTs}:`, error).pipe(
-          Effect.as(null),
+          Effect.as(UNAVAILABLE),
         ),
       ),
     ),

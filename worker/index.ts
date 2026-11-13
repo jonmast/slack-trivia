@@ -1,10 +1,17 @@
 import { SlackApp } from "slack-cloudflare-workers";
 import type { Env } from "./env";
 import { renderRecapModal } from "../src/slack-ui";
+import type { RecapLookup } from "./channel-quiz";
 
 export { ChannelObject } from "./channel-object";
 
 export const SLACK_EVENTS_PATH = "/slack/events";
+
+const RECAP_MISSING = {
+  "not-participant":
+    "You didn't answer any questions in that quiz, so there's no recap for you.",
+  unavailable: "That quiz's recap is no longer available.",
+};
 
 export default {
   async fetch(
@@ -100,17 +107,20 @@ export default {
         const messageTs = action?.value;
         const channelId = "channel" in payload ? payload.channel?.id : undefined;
 
-        const recap =
+        const lookup: RecapLookup =
           messageTs && channelId
             ? await env.CHANNEL_OBJECT.get(
                 env.CHANNEL_OBJECT.idFromName(channelId),
               ).getRecap(payload.user.id, messageTs)
-            : null;
+            : { found: false, reason: "unavailable" };
 
-        if (!recap) {
+        if (!lookup.found) {
+          // Without `replace_original: false` Slack swaps the summary, Recap
+          // button and all, for this reply.
           await context.respond?.({
             response_type: "ephemeral",
-            text: "That quiz's recap is no longer available.",
+            replace_original: false,
+            text: RECAP_MISSING[lookup.reason],
           });
 
           return "";
@@ -119,7 +129,7 @@ export default {
         try {
           await context.client.views.open({
             trigger_id: payload.trigger_id,
-            view: renderRecapModal(recap),
+            view: renderRecapModal(lookup.recap),
           });
         } catch (error) {
           console.error("Failed to open recap:", error);

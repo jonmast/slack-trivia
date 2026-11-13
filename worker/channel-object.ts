@@ -1,12 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { Config, ConfigProvider, Layer, ManagedRuntime, Option } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/http";
-import type { RecapQuestion } from "../src/trivia-core";
 import {
   alarm,
   getRecap,
   startQuiz,
   submitAnswer,
+  type RecapLookup,
   type StartQuizResult,
 } from "./channel-quiz";
 import { WorkerConfig } from "./config";
@@ -87,7 +87,7 @@ export class ChannelObject extends DurableObject<Env> {
   }
 
   /** A participant's recap of the quiz hosted by `messageTs`; see `getRecap`. */
-  getRecap(userId: string, messageTs: string): RecapQuestion[] | null {
+  getRecap(userId: string, messageTs: string): RecapLookup {
     return this.runtime.runSync(getRecap(userId, messageTs));
   }
 
