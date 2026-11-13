@@ -1,6 +1,7 @@
 import { env, fetchMock } from 'cloudflare:test'
 import { Schema } from 'effect'
 import type { TriviaQuestion } from '../../src/trivia-core'
+import { SCREENING_CLASSES } from '../../worker/screening'
 
 /** Shared plumbing for worker tests: the channel stub and the fake Slack/Trivia network. */
 
@@ -251,4 +252,150 @@ export async function slackRequest(
 /** Header text of a channel frame, e.g. `Question 2/3:` or `Answer 1/3:`. */
 export function headerText(blocks: any[]): string | undefined {
   return blocks.find((block) => block.type === 'header')?.text?.text
+}
+
+export const JEV_ORIGIN = 'https://opencode.ai'
+export const JEV_PATH = '/inference/systemone/v1/systemone'
+
+/** The OpenCode key the test bindings configure, as every Jev call must carry it. */
+export const JEV_AUTH_HEADERS = { authorization: 'Bearer test-opencode-key' }
+
+export type ScreeningClassName = 'good' | 'misleading' | 'garbled' | 'stale' | 'giveaway'
+
+/** A verdict as a test states it: classes by name, not by Jev's wire IDs. */
+export type JevVerdict = {
+  choice: ScreeningClassName
+  probabilities: Partial<Record<ScreeningClassName, number>>
+}
+
+/** `choice` at probability `p`, the rest shared evenly among the other classes. */
+export function verdict(choice: ScreeningClassName, p: number): JevVerdict {
+  const others = SCREENING_CLASSES.filter(({ name }) => name !== choice)
+
+  return {
+    choice,
+    probabilities: Object.fromEntries([
+      [choice, p],
+      ...others.map(({ name }) => [name, (1 - p) / others.length]),
+    ]),
+  }
+}
+
+const decodeJevRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      model: Schema.String,
+      state: Schema.Struct({
+        purpose: Schema.String,
+        classes: Schema.Array(Schema.Struct({ id: Schema.String, description: Schema.String })),
+      }),
+      questions: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          type: Schema.Literal('choice'),
+          instructions: Schema.Struct({
+            task: Schema.String,
+            item: Schema.Struct({ text: Schema.String }),
+          }),
+          criteria: Schema.Record(Schema.String, Schema.Null),
+        }),
+      ),
+    }),
+  ),
+)
+
+export type JevRequest = ReturnType<typeof decodeJevRequest>
+
+/** The question ID a screening item is about; `TriviaFake` puts it in the question text. */
+export function itemQuestionId(item: string): string {
+  const match = /^Question: Question (\S+)\?$/m.exec(item)
+
+  if (!match) throw new Error(`No question ID in screening item: ${item}`)
+
+  return match[1]
+}
+
+/**
+ * Jev, answering every screening request for the rest of the file. `judge`
+ * gives each item's verdict by its text, or undefined to leave it
+ * unanswered; it is reset to passing everything between tests.
+ */
+export class JevFake {
+  requests: JevRequest[] = []
+  judge: (item: string) => JevVerdict | undefined = () => verdict('good', 0.95)
+
+  reset(): void {
+    this.requests = []
+    this.judge = () => verdict('good', 0.95)
+  }
+
+  /** Every item Jev was asked about, across all requests, in order. */
+  get items(): string[] {
+    return this.requests.flatMap((request) =>
+      Object.values(request.questions).map((question) => question.instructions.item.text),
+    )
+  }
+
+  install(): void {
+    fetchMock
+      .get(JEV_ORIGIN)
+      .intercept({ path: JEV_PATH, method: 'POST', headers: JEV_AUTH_HEADERS })
+      .reply(200, (options) => {
+        const request = decodeJevRequest(requestBodyText(options.body))
+        this.requests.push(request)
+
+        // Classes are matched by description, so the fake is blind to how
+        // the worker numbers them.
+        const idOf = (name: string) => {
+          const { description } = SCREENING_CLASSES.find((c) => c.name === name)!
+
+          return request.state.classes.find((c) => c.description === description)!.id
+        }
+
+        const answers = Object.entries(request.questions).flatMap(([key, question]) => {
+          const judged = this.judge(question.instructions.item.text)
+
+          if (!judged) return []
+
+          const probabilities = Object.fromEntries(
+            Object.entries(judged.probabilities).map(([name, p]) => [idOf(name), p]),
+          )
+
+          return [[key, { type: 'choice', choice: idOf(judged.choice), confidence: 0.9, probabilities }]]
+        })
+
+        return {
+          model: request.model,
+          answers: Object.fromEntries(answers),
+          usage: { input_tokens: 100, output_tokens: 10 },
+        }
+      })
+      .persist()
+  }
+}
+
+/** A `screenings` row as D1 stores it. */
+export type ScreeningRow = {
+  question_id: string
+  channel_id: string
+  message_ts: string
+  question: string
+  options: string
+  correct_answer: string
+  outcome: string
+  class: string | null
+  probabilities: string | null
+  model: string | null
+  screened_at: string
+}
+
+/** Every verdict recorded for a channel's quizzes, in the order they were written. */
+export async function screeningRows(channelId: string): Promise<ScreeningRow[]> {
+  const { results } = await env.DB.prepare(
+    'SELECT * FROM screenings WHERE channel_id = ? ORDER BY id',
+  )
+    .bind(channelId)
+    .all<ScreeningRow>()
+
+  return results
 }

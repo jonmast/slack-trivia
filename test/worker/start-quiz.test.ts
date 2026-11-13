@@ -124,6 +124,19 @@ describe('ChannelObject.startQuiz', () => {
     expectReadyBlocks(posted.blocks, questions[0].id, COUNTDOWN_ORIGIN, 10)
   })
 
+  it('fetches twice the requested number of questions, for screening to reject some', async () => {
+    fetchMock
+      .get('https://the-trivia-api.com')
+      .intercept({ path: '/v2/questions?limit=8', method: 'GET' })
+      .reply(200, createTriviaQuestions(8))
+    interceptPostMessage()
+
+    const result = await channelObject('C1').startQuiz('C1', '4 10s', COUNTDOWN_ORIGIN)
+
+    expect(result.ok).toBe(true)
+    expect(postedBodies[0].blocks[1].text.text).toContain('4 questions')
+  })
+
   it('refuses a second quiz while one is running in the channel', async () => {
     interceptTrivia(createTriviaQuestions(3))
     interceptPostMessage()

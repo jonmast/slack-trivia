@@ -8,18 +8,32 @@ export class ChannelStorage extends Context.Service<
 >()("slack-trivia/worker/ChannelStorage") {}
 
 /**
- * Where a quiz is in its cycle. A `ready` phase ends when the first question
- * is due, a `question` phase at the answer window's deadline, a `results`
- * phase that many seconds later; `complete` sets no alarm.
+ * Where a quiz is in its cycle. A `screening` phase is a ready screen whose
+ * questions are still being screened, and a `ready` phase one whose questions
+ * have been; both end when the first question is due. An `extended` phase is the ready screen kept up past its countdown,
+ * due each time another search for questions is; a `question` phase ends at
+ * the answer window's deadline, a `results` phase that many seconds later;
+ * `complete` sets no alarm.
  */
-const Phase = Schema.Literals(["ready", "question", "results", "complete"]);
+const Phase = Schema.Literals([
+  "screening",
+  "ready",
+  "extended",
+  "question",
+  "results",
+  "complete",
+]);
 
 /**
  * The `state` column: the quiz snapshot plus what only the channel object
  * needs — which phase it is in, the absolute epoch-ms deadline that phase's
- * alarm is set to, the questions fetched at start but not yet asked, and the
- * origin the countdown GIFs are served from (there is no request to derive it
- * from when an alarm fires).
+ * alarm is set to, the questions not yet asked, and the origin the countdown
+ * GIFs are served from (there is no request to derive it from when an alarm
+ * fires).
+ *
+ * `pending` holds the questions fetched at start while they are screened,
+ * and only the ones cleared to be asked from then on. `extendedUntil` is when
+ * an extended ready screen stops looking.
  */
 export const QuizRecord = Schema.Struct({
   ...QuizSnapshot.fields,
@@ -27,6 +41,7 @@ export const QuizRecord = Schema.Struct({
   deadline: Schema.Number,
   pending: Schema.Array(TriviaQuestion),
   origin: Schema.String,
+  extendedUntil: Schema.optionalKey(Schema.Number),
 });
 
 export type QuizRecord = typeof QuizRecord.Type;

@@ -5,6 +5,7 @@ import type { Question, TriviaQuestion } from '../../src/trivia-core'
 import { renderChannelReady, renderChannelResults, renderFinalSummary } from '../../src/slack-ui'
 import { countdownGifUrl } from '../../src/countdown'
 import {
+  JevFake,
   SlackRecorder,
   channelObject,
   createTriviaQuestions,
@@ -43,6 +44,9 @@ const READY_SECS = 1
  * a per-test recorder would only ever see the first test's traffic.
  */
 const slack = new SlackRecorder()
+
+/** Clears every question, so these quizzes run screened on what they fetch. */
+const jev = new JevFake()
 
 async function start(
   channelId: string,
@@ -104,10 +108,12 @@ describe('alarm-driven progression', () => {
     fetchMock.activate()
     fetchMock.disableNetConnect()
     slack.install()
+    jev.install()
   })
 
   beforeEach(() => {
     slack.reset()
+    jev.reset()
   })
 
   it('runs a whole quiz to completion, one Slack edit per transition', async () => {
@@ -118,6 +124,7 @@ describe('alarm-driven progression', () => {
 
     const [post, question1, results1, question2, results2, summary] = slack.calls
     expect(post.method).toBe('chat.postMessage')
+    expect(jev.items).toHaveLength(2)
 
     // The quiz opens on the ready screen, not the first question.
     expect(post.blocks).toEqual(

@@ -8,6 +8,8 @@ import {
   type TriviaQuestion,
 } from "../src/trivia-core";
 import {
+  renderChannelCancelled,
+  renderChannelExtended,
   renderChannelQuestion,
   renderChannelReady,
   renderChannelResults,
@@ -15,7 +17,10 @@ import {
 } from "../src/slack-ui";
 import { countdownGifUrl } from "../src/countdown";
 import { WorkerConfig } from "./config";
+import type { Jev } from "./jev";
 import { QuizStore, type QuizRecord } from "./quiz-store";
+import { askable, screenQuestions } from "./screening";
+import type { ScreeningLog } from "./screening-log";
 import {
   SlackClient,
   type SlackApiError,
@@ -66,12 +71,23 @@ function restore(record: QuizRecord, pending: TriviaQuestion[]) {
   return Quiz.fromSnapshot(record, questionSource(pending));
 }
 
+/** Questions fetched per question asked, so screening has some to reject. */
+const CANDIDATES_PER_QUESTION = 2;
+
+/** The pause between searches for more questions on an extended ready screen. */
+const SEARCH_INTERVAL_MS = 2000;
+
 /**
- * Start a channel quiz. Parses `/quizzo` arguments, fetches the requested
- * number of questions from The Trivia API in a single request, posts the
- * ready screen via `chat.postMessage`, and stores the quiz, running but with
- * no question asked yet, in SQLite before returning. The alarm that ends the
- * ready screen asks the first question.
+ * Start a channel quiz. Parses `/quizzo` arguments, fetches twice the
+ * requested number of questions from The Trivia API in a single request,
+ * posts the ready screen via `chat.postMessage`, and stores the quiz, running
+ * but with no question asked yet, in SQLite before returning.
+ *
+ * The quiz is stored in its `screening` phase, with the alarm that ends the
+ * ready screen already set, and the fetched questions are then screened
+ * while the countdown runs. Should the object go away before screening is
+ * done, that alarm screens them instead, late; either way the alarm that
+ * ends the ready screen asks the first question.
  */
 export const startQuiz = Effect.fn("startQuiz")(
   function* (channelId: string, text: string, origin: string) {
@@ -86,18 +102,19 @@ export const startQuiz = Effect.fn("startQuiz")(
       );
     }
 
-    // Exactly the requested number of questions, in one API request.
-    const fetched = yield* (yield* TriviaApi).fetchQuestions(numQuestions);
+    const fetched = yield* (yield* TriviaApi).fetchQuestions(
+      numQuestions * CANDIDATES_PER_QUESTION,
+    );
 
+    // Too few to ask even unscreened: nothing to start with.
     if (fetched.length < numQuestions) return refuse(NOT_ENOUGH_QUESTIONS);
 
-    const queue = [...fetched];
-    const quiz = new Quiz(questionSource(queue), numQuestions, timeoutSecs);
+    const quiz = new Quiz(questionSource([]), numQuestions, timeoutSecs);
     const { readySecs } = yield* WorkerConfig;
 
-    // The queue holds at least `numQuestions` (>= 1) questions, so the first
-    // one is always there to key the GIF on.
-    const gifUrl = countdownGifUrl(origin, readySecs, `${queue[0].id}-ready`);
+    // At least `numQuestions` (>= 1) questions were fetched, so the first one
+    // is always there to key the GIF on.
+    const gifUrl = countdownGifUrl(origin, readySecs, `${fetched[0].id}-ready`);
 
     const messageTs = yield* (yield* SlackClient).postMessage(
       channelId,
@@ -111,15 +128,21 @@ export const startQuiz = Effect.fn("startQuiz")(
 
     yield* store.insertRunning(messageTs, {
       ...quiz.toSnapshot(),
-      phase: "ready",
+      phase: "screening",
       deadline,
       // Every question waits here until it is asked: a restarted object has no
       // other source for them.
-      pending: queue,
+      pending: fetched,
       origin,
     });
 
     yield* store.setAlarm(deadline);
+
+    yield* screen(messageTs).pipe(
+      Effect.catch((error) =>
+        Effect.logError("Failed to screen questions; the ready alarm will retry:", error),
+      ),
+    );
 
     return { ok: true, text: "Quiz started!", messageTs };
   },
@@ -315,9 +338,9 @@ const advance = Effect.fn("advance")(function* (
   const pending = [...record.pending];
   const quiz = yield* restore(record, pending);
 
-  const question = yield* record.phase === "ready"
-    ? quiz.startQuiz()
-    : quiz.nextQuestion();
+  const question = yield* record.phase === "results"
+    ? quiz.nextQuestion()
+    : quiz.startQuiz();
 
   const { current, total } = quiz.getProgress();
 
@@ -354,6 +377,214 @@ const advance = Effect.fn("advance")(function* (
     origin: record.origin,
   });
 
+  yield* store.setAlarm(deadline);
+});
+
+/** How many more questions must pass screening before the quiz can start. */
+function shortfall(record: QuizRecord): number {
+  return record.maxQuestions - record.questions.length - record.pending.length;
+}
+
+const screeningQuiz = Effect.fn("screeningQuiz")(function* (messageTs: string) {
+  const channelId = yield* (yield* QuizStore).channelId;
+
+  if (Option.isNone(channelId)) {
+    return yield* new ChannelUnknownError();
+  }
+
+  return { channelId: channelId.value, messageTs };
+});
+
+/** The running quiz hosted by `messageTs`, if it is still being screened. */
+const loadScreening = Effect.fn("loadScreening")(function* (messageTs: string) {
+  const running = yield* (yield* QuizStore).loadRunning;
+
+  return Option.flatMap(running, (quiz) =>
+    quiz.messageTs === messageTs && quiz.record.phase === "screening"
+      ? Option.some(quiz.record)
+      : Option.none(),
+  );
+});
+
+/**
+ * Screen the questions fetched at start, keeping only those that may be
+ * asked, and leave the ready screen to end when it was going to. The record
+ * is read again once Jev has answered, and left alone if screening finished
+ * meanwhile: started by `startQuiz` and, after an eviction or a slow Jev, by
+ * the ready alarm, screening can run twice, recording a verdict twice, but
+ * the quiz moves on once.
+ */
+const screen = Effect.fn("screen")(function* (messageTs: string) {
+  const store = yield* QuizStore;
+  const before = yield* loadScreening(messageTs);
+
+  if (Option.isNone(before)) return;
+
+  const verdicts = yield* screenQuestions(
+    yield* screeningQuiz(messageTs),
+    before.value.pending,
+  );
+
+  const after = yield* loadScreening(messageTs);
+
+  if (Option.isNone(after)) return;
+
+  yield* store.save(messageTs, {
+    ...after.value,
+    phase: "ready",
+    pending: askable(verdicts),
+  });
+
+  // A no-op while the countdown runs; when the ready alarm is the one
+  // screening, the countdown is over and this ends the ready screen next.
+  yield* store.setAlarm(after.value.deadline);
+});
+
+/**
+ * The countdown ran out before screening cleared enough questions: say so on
+ * the ready screen and keep looking, starting at once.
+ */
+const extend = Effect.fn("extend")(function* (
+  messageTs: string,
+  record: QuizRecord,
+) {
+  const store = yield* QuizStore;
+  const { extendedReadySecs } = yield* WorkerConfig;
+
+  yield* updateChannelMessage(
+    messageTs,
+    renderChannelExtended(record.maxQuestions, record.timeoutSecs),
+    "Finding good questions is taking longer than expected",
+  );
+
+  const now = yield* Clock.currentTimeMillis;
+
+  yield* store.save(messageTs, {
+    ...record,
+    phase: "extended",
+    deadline: now,
+    extendedUntil: now + extendedReadySecs * 1000,
+  });
+
+  yield* store.setAlarm(now);
+});
+
+/**
+ * Give up on a quiz that no question passed screening for: the row is marked
+ * finished and the alarm cleared first, like `complete`, and the apology is a
+ * best-effort attempt on top.
+ */
+const cancel = Effect.fn("cancel")(function* (
+  messageTs: string,
+  record: QuizRecord,
+) {
+  const store = yield* QuizStore;
+  yield* Effect.logWarning("No question passed screening; cancelling the quiz");
+  yield* store.finish(messageTs, { ...record, phase: "complete" });
+  yield* store.deleteAlarm;
+
+  yield* updateChannelMessage(
+    messageTs,
+    renderChannelCancelled(),
+    "Sorry, no quiz this time: we couldn't find any good questions.",
+  ).pipe(
+    Effect.catch((error) => Effect.logError("Failed to post the apology:", error)),
+  );
+});
+
+/**
+ * The extended ready screen is over: start with the questions that passed,
+ * on a fresh countdown that says the quiz is shorter, or cancel if none did.
+ */
+const settle = Effect.fn("settle")(function* (
+  messageTs: string,
+  record: QuizRecord,
+) {
+  if (record.pending.length === 0) {
+    return yield* cancel(messageTs, record);
+  }
+
+  const store = yield* QuizStore;
+  const { readySecs } = yield* WorkerConfig;
+  const total = record.questions.length + record.pending.length;
+
+  const gifUrl = countdownGifUrl(
+    record.origin,
+    readySecs,
+    `${record.pending[0].id}-shortened`,
+  );
+
+  const found =
+    total === 1 ? "1 good question" : `${total} good questions`;
+
+  yield* updateChannelMessage(
+    messageTs,
+    renderChannelReady(
+      total,
+      record.timeoutSecs,
+      readySecs,
+      gifUrl,
+      `🔎 We only found ${found}, so this quiz is shorter than planned.`,
+    ),
+    `Trivia is starting with ${found}: first question in ${readySecs} seconds`,
+  );
+
+  const deadline = (yield* Clock.currentTimeMillis) + readySecs * 1000;
+
+  yield* store.save(messageTs, {
+    ...record,
+    maxQuestions: total,
+    phase: "ready",
+    deadline,
+  });
+
+  yield* store.setAlarm(deadline);
+});
+
+/**
+ * One more search on an extended ready screen: fetch and screen enough
+ * questions to cover the shortfall twice over, then start the quiz if they
+ * do, or search again shortly. Once the extended ready screen has run its
+ * course, settle for what passed.
+ */
+const search = Effect.fn("search")(function* (
+  messageTs: string,
+  record: QuizRecord,
+) {
+  const store = yield* QuizStore;
+  const now = yield* Clock.currentTimeMillis;
+  const until = record.extendedUntil ?? now;
+
+  if (now >= until) return yield* settle(messageTs, record);
+
+  const fetched = yield* (yield* TriviaApi)
+    .fetchQuestions(shortfall(record) * CANDIDATES_PER_QUESTION)
+    .pipe(
+      Effect.catchTag("TriviaApiError", (error) =>
+        Effect.logWarning("Failed to fetch more trivia questions:", error).pipe(
+          Effect.as([]),
+        ),
+      ),
+    );
+
+  const known = new Set(record.pending.map((question) => question.id));
+  const fresh = fetched.filter((question) => !known.has(question.id));
+
+  const verdicts = yield* screenQuestions(
+    yield* screeningQuiz(messageTs),
+    fresh,
+  );
+
+  const found = { ...record, pending: [...record.pending, ...askable(verdicts)] };
+
+  if (shortfall(found) <= 0) return yield* advance(messageTs, found);
+
+  const deadline = Math.min(
+    (yield* Clock.currentTimeMillis) + SEARCH_INTERVAL_MS,
+    until,
+  );
+
+  yield* store.save(messageTs, { ...found, deadline });
   yield* store.setAlarm(deadline);
 });
 
@@ -434,7 +665,7 @@ const complete = Effect.fn("complete")(
 export const alarm: Effect.Effect<
   void,
   SlackRequestError,
-  QuizStore | SlackClient | WorkerConfig
+  QuizStore | SlackClient | WorkerConfig | TriviaApi | Jev | ScreeningLog
 > = Effect.gen(function* () {
   const store = yield* QuizStore;
   const running = yield* store.loadRunning;
@@ -450,18 +681,20 @@ export const alarm: Effect.Effect<
   }
 
   const transition = Match.value(record.phase).pipe(
-    Match.when("question", () => showResults(messageTs, record)),
-    Match.whenOr("ready", "results", () =>
-      advance(messageTs, record).pipe(
-        Effect.catchTag("QuizCompleteError", () =>
-          complete(messageTs, record),
-        ),
-      ),
+    Match.when("screening", () => screen(messageTs)),
+    Match.when("ready", () =>
+      shortfall(record) > 0
+        ? extend(messageTs, record)
+        : advance(messageTs, record),
     ),
+    Match.when("extended", () => search(messageTs, record)),
+    Match.when("question", () => showResults(messageTs, record)),
+    Match.when("results", () => advance(messageTs, record)),
     Match.orElse(() => Effect.void),
   );
 
   yield* transition.pipe(
+    Effect.catchTag("QuizCompleteError", () => complete(messageTs, record)),
     // A message that can no longer be updated or a question source that ran
     // dry ends the quiz rather than leaving the channel in a half state.
     Effect.catchTag(

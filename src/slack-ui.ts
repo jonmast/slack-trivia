@@ -29,19 +29,16 @@ export function renderChannelReady(
   timeoutSecs: number,
   readySecs: number,
   countdownGifUrl: string,
+  note?: string,
 ): AnyMessageBlock[] {
+  const noteBlock: AnyMessageBlock[] = note
+    ? [{ type: "context", elements: [{ type: "mrkdwn", text: note }] }]
+    : []
+
   return [
-    {
-      type: "header",
-      text: { type: "plain_text", text: "Get ready!" },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `🧠 *Trivia time!*\n\n${plural(totalQuestions, "question", "questions")}, ${plural(timeoutSecs, "second", "seconds")} each. Answer fast for a speed bonus.`,
-      },
-    },
+    readyHeader(),
+    readySummary(totalQuestions, timeoutSecs),
+    ...noteBlock,
     {
       type: "context",
       elements: [
@@ -50,6 +47,48 @@ export function renderChannelReady(
       ],
     },
   ]
+}
+
+/**
+ * The extended ready screen: the countdown has run out before screening
+ * cleared enough questions, so there is no countdown to show.
+ */
+export function renderChannelExtended(totalQuestions: number, timeoutSecs: number): AnyMessageBlock[] {
+  return [
+    readyHeader(),
+    readySummary(totalQuestions, timeoutSecs),
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "🔎 Finding good questions is taking longer than expected…" }],
+    },
+  ]
+}
+
+/** What replaces the ready screen when screening cleared no questions at all. */
+export function renderChannelCancelled(): AnyMessageBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "😞 *Sorry, no quiz this time.*\n\nWe couldn't find any good questions. Please try `/quizzo` again in a little while.",
+      },
+    },
+  ]
+}
+
+function readyHeader(): AnyMessageBlock {
+  return { type: "header", text: { type: "plain_text", text: "Get ready!" } }
+}
+
+function readySummary(totalQuestions: number, timeoutSecs: number): AnyMessageBlock {
+  return {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `🧠 *Trivia time!*\n\n${plural(totalQuestions, "question", "questions")}, ${plural(timeoutSecs, "second", "seconds")} each. Answer fast for a speed bonus.`,
+    },
+  }
 }
 
 /**
