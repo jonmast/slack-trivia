@@ -159,6 +159,7 @@ describe('TriviaQuestion', () => {
   it('decodes a question as The Trivia API sends it, keeping what the app reads', () => {
     expect(decode(payload)).toEqual({
       id: '622a1c357cc59eab6f94fd8e',
+      category: 'science',
       correctAnswer: 'Mercury',
       incorrectAnswers: ['Venus', 'Mars', 'Jupiter'],
       question: { text: 'Which planet is closest to the Sun?' },
@@ -168,7 +169,6 @@ describe('TriviaQuestion', () => {
   it('tolerates changes to fields the app never reads', () => {
     const changed = {
       ...payload,
-      category: undefined,
       tags: null,
       type: 'image_choice',
       difficulty: 'impossible',
@@ -176,6 +176,14 @@ describe('TriviaQuestion', () => {
     }
 
     expect(decode(changed)).toEqual(decode(payload))
+  })
+
+  it('drops a category it cannot read, since only screening uses it', () => {
+    const { category: _, ...expected } = decode(payload)
+
+    expect(decode({ ...payload, category: undefined })).toStrictEqual(expected)
+    expect(decode({ ...payload, category: 42 })).toStrictEqual(expected)
+    expect(decode({ ...payload, category: 'science' })).toEqual({ ...expected, category: 'science' })
   })
 
   it('rejects a payload it could not ask', () => {

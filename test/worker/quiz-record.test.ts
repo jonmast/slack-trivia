@@ -103,6 +103,7 @@ describe('QuizRecord rows stored before Effect', () => {
     // Fields the app never reads are dropped from the pending questions.
     expect(record.pending[0]).toEqual({
       id: '622a1c357cc59eab6f94f2',
+      category: 'science',
       correctAnswer: 'Correct 2',
       incorrectAnswers: ['Wrong 2a', 'Wrong 2b', 'Wrong 2c'],
       question: { text: 'Question 2?' },

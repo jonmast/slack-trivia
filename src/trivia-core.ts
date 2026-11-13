@@ -10,6 +10,10 @@ import { MAX_TIMEOUT_SECS, TIMEOUT_SECS } from "./timing";
  */
 export const TriviaQuestion = Schema.Struct({
   id: Schema.String,
+  /** Context for screening only, so an absent or odd one is dropped, not fatal. */
+  category: Schema.optionalKey(
+    Schema.String.pipe(Schema.catchDecoding(() => Effect.succeedNone)),
+  ),
   correctAnswer: Schema.String,
   incorrectAnswers: Schema.Tuple([Schema.String, Schema.String, Schema.String]),
   question: Schema.Struct({
