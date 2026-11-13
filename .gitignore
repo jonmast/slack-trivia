@@ -6,3 +6,4 @@ public/countdown
 .dev.vars.*
 !.dev.vars.example
 .wrangler
+.grading
