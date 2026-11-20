@@ -1,7 +1,7 @@
 import { env, fetchMock, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { ChannelObject } from '../../worker/channel-object'
-import { renderChannelCancelled, renderChannelExtended } from '../../src/slack-ui'
+import { OPTION_TEXT_MAX, renderChannelCancelled, renderChannelExtended } from '../../src/slack-ui'
 import {
   JevFake,
   SlackRecorder,
@@ -45,6 +45,8 @@ class TriviaFake {
   ids: (index: number) => string[] | null = () => null
   failStatus: (index: number) => number | null = () => null
   delayMs: (index: number) => number = () => 0
+  /** IDs of questions whose correct answer is one character too long for a Slack option. */
+  longAnswers = new Set<string>()
   private served = 0
 
   reset(): void {
@@ -52,6 +54,7 @@ class TriviaFake {
     this.ids = () => null
     this.failStatus = () => null
     this.delayMs = () => 0
+    this.longAnswers = new Set()
     this.served = 0
   }
 
@@ -81,6 +84,7 @@ class TriviaFake {
             ...question,
             id: ids[i],
             question: { text: `Question ${ids[i]}?` },
+            correctAnswer: this.longAnswers.has(ids[i]) ? 'x'.repeat(OPTION_TEXT_MAX + 1) : question.correctAnswer,
           }),
         )
 
@@ -170,6 +174,23 @@ describe('screening questions with Jev', () => {
     await waitForCalls(slack, 8)
     expect(askedIds()).toEqual(['t2', 't4', 't6'])
     expect(headerText(slack.updates[0].blocks)).toBe('Question 1/3:')
+  })
+
+  it('drops questions with an answer too long for a Slack option before screening, logging them', async () => {
+    trivia.longAnswers = new Set(['t2'])
+    const log = vi.spyOn(console, 'log')
+
+    await start('C-LONG', `2 ${WINDOW}`)
+
+    expect(jev.items.map(itemQuestionId)).toEqual(['t1', 't3', 't4'])
+    expect((await screeningRows('C-LONG')).map((row) => row.question_id)).toEqual(['t1', 't3', 't4'])
+    const dropped = log.mock.calls.flatMap(([line]) => (String(line).includes('too long for Slack') ? [JSON.parse(line)] : []))
+    expect(dropped.map((line) => line.annotations.tooLong.id)).toEqual(['t2'])
+    log.mockRestore()
+
+    // ready, then question/results twice, then the final summary
+    await waitForCalls(slack, 6)
+    expect(askedIds()).toEqual(['t1', 't3'])
   })
 
   it('sends Jev each question with its category and options, the correct one marked', async () => {

@@ -1,5 +1,6 @@
 import { Context, Duration, Effect, Layer, Schema } from "effect";
 import { HttpClient } from "effect/http";
+import { OPTION_TEXT_MAX } from "../src/slack-ui";
 import { TriviaQuestion } from "../src/trivia-core";
 
 const TRIVIA_API_URL = "https://the-trivia-api.com/v2/questions";
@@ -24,10 +25,20 @@ const decodeQuestions = Schema.decodeUnknownEffect(
   Schema.Array(TriviaQuestion),
 );
 
+/** Slack would cut off a radio button label longer than this. */
+function fitsSlack(question: TriviaQuestion): boolean {
+  return [question.correctAnswer, ...question.incorrectAnswers].every(
+    (answer) => answer.length <= OPTION_TEXT_MAX,
+  );
+}
+
 export class TriviaApi extends Context.Service<
   TriviaApi,
   {
-    /** Up to `count` questions in one request; the API may return fewer. */
+    /**
+     * Up to `count` questions in one request; the API may return fewer, and
+     * questions with an answer too long for Slack are dropped.
+     */
     readonly fetchQuestions: (
       count: number,
     ) => Effect.Effect<readonly TriviaQuestion[], TriviaApiError>;
@@ -47,7 +58,17 @@ export class TriviaApi extends Context.Service<
               urlParams: { limit: count },
             });
 
-            return yield* decodeQuestions(yield* response.json);
+            const questions = yield* decodeQuestions(yield* response.json);
+
+            for (const question of questions) {
+              if (fitsSlack(question)) continue;
+
+              yield* Effect.log("Dropped question: an answer is too long for Slack").pipe(
+                Effect.annotateLogs({ tooLong: question }),
+              );
+            }
+
+            return questions.filter(fitsSlack);
           },
           Effect.timeout(FETCH_TIMEOUT),
           Effect.mapError((cause) => new TriviaApiError({ cause })),
