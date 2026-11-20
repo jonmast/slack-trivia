@@ -8,6 +8,7 @@ Installed with the upstream `skills/install-anti-slop/scripts/install.mjs` copy 
 
 Installed paths:
 
+- `tools/oxlint/anti-slop/LICENSE` — upstream MIT license at the commit above, retained verbatim
 - `tools/oxlint/anti-slop/index.ts` — generic `anti-slop` plugin entry point
 - `tools/oxlint/anti-slop/rules/**` — 18 generic rules
 - `tools/oxlint/anti-slop/shared/**` — shared AST/scope helpers
