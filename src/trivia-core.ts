@@ -66,6 +66,61 @@ export type RecapQuestion = {
   speedBonus: number;
 };
 
+/** One answer singled out for an award: who gave it, the option they picked and how fast. */
+export type AwardedAnswer = {
+  userId: string;
+  /** The picked option's text. */
+  pick: string;
+  /** Seconds from the question appearing to the answer. */
+  secs: number;
+};
+
+/** The wrong option the most participants picked together on one question. */
+export type HerdAnswer = {
+  /** The picked option's text. */
+  pick: string;
+  count: number;
+};
+
+/** A wrong answer only wins fastest wrong answer when it came this quickly. */
+export const FASTEST_WRONG_MAX_SECS = 2;
+
+/** The fewest participants on one wrong option that make a herd. */
+export const HERD_MIN = 3;
+
+type AwardPick = {
+  awarded: AwardedAnswer;
+  optionId: string;
+  correct: boolean;
+  secs: number;
+};
+
+/** The wrong option most picked on one question, when enough picked it. */
+function biggestHerd(picks: AwardPick[]): HerdAnswer | undefined {
+  const counts = new Map<string, HerdAnswer>();
+
+  for (const { optionId, correct, awarded } of picks) {
+    if (correct) continue;
+
+    const herd = counts.get(optionId) ?? { pick: awarded.pick, count: 0 };
+    counts.set(optionId, { ...herd, count: herd.count + 1 });
+  }
+
+  return [...counts.values()]
+    .filter((herd) => herd.count >= HERD_MIN)
+    .reduce<HerdAnswer | undefined>(
+      (best, herd) => (best && best.count >= herd.count ? best : herd),
+      undefined,
+    );
+}
+
+/** The joke awards on the final summary; each is none when nobody earned it. */
+export type Awards = {
+  fastestWrong: Option.Option<AwardedAnswer>;
+  slowestRight: Option.Option<AwardedAnswer>;
+  herd: Option.Option<HerdAnswer>;
+};
+
 export class QuizCompleteError extends Schema.TaggedError<QuizCompleteError>()(
   "QuizCompleteError",
   {},
@@ -583,6 +638,66 @@ export class Quiz {
         points: earned.points,
         speedBonus: earned.speedBonus,
       };
+    });
+  }
+
+  /**
+   * The joke awards, each only when it would land: the fastest wrong answer
+   * under `FASTEST_WRONG_MAX_SECS`, the slowest right answer once at least
+   * half the answer window had gone, and the wrong option most participants
+   * picked together on one question, when at least `HERD_MIN` did. Ties go
+   * to the earlier question or answer.
+   */
+  getAwards(): Awards {
+    const picks = this.state.questions.map((question) => this.picksFor(question));
+    const all = picks.flat();
+
+    const fastestWrong = all
+      .filter((p) => !p.correct && p.secs < FASTEST_WRONG_MAX_SECS)
+      .reduce<AwardedAnswer | undefined>(
+        (best, p) => (best && best.secs <= p.secs ? best : p.awarded),
+        undefined,
+      );
+
+    const slowestRight = all
+      .filter((p) => p.correct && p.secs >= this.timeoutSecs / 2)
+      .reduce<AwardedAnswer | undefined>(
+        (best, p) => (best && best.secs >= p.secs ? best : p.awarded),
+        undefined,
+      );
+
+    const herd = picks
+      .map(biggestHerd)
+      .reduce<HerdAnswer | undefined>(
+        (best, h) => (h && (!best || h.count > best.count) ? h : best),
+        undefined,
+      );
+
+    return {
+      fastestWrong: Option.fromUndefinedOr(fastestWrong),
+      slowestRight: Option.fromUndefinedOr(slowestRight),
+      herd: Option.fromUndefinedOr(herd),
+    };
+  }
+
+  /** Every answer to `question` that counts, with how long it took. */
+  private picksFor(question: Question): AwardPick[] {
+    return question.responses.flatMap((response) => {
+      const answer = question.answers.find((a) => a.id === response.answerId);
+
+      if (!answer) return [];
+
+      // Slack's clock and ours can disagree by a little.
+      const secs = Math.max(0, getElapsedTime(question, response.timestamp));
+
+      return [
+        {
+          awarded: { userId: response.userId, pick: answer.text, secs },
+          optionId: answer.id,
+          correct: isCorrectAnswer(question, answer.id),
+          secs,
+        },
+      ];
     });
   }
 

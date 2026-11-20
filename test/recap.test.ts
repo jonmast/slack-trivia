@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { AnyMessageBlock, AnyModalBlock } from 'slack-cloudflare-workers'
-import { Effect } from 'effect'
-import { Quiz, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
+import { Effect, Option } from 'effect'
+import { Quiz, type Awards, type QuestionSource, type RecapQuestion } from '../src/trivia-core'
 import { renderRecapModal, renderFinalSummary } from '../src/slack-ui'
-import { blockText, createMockQuestions, createQuestionSource, findBlock, findBlocks } from './test-utils'
+import { NO_AWARDS, blockText, createMockQuestions, createQuestionSource, findBlock, findBlocks } from './test-utils'
 
 describe('Quiz.getRecap', () => {
   let store: QuestionSource
@@ -261,6 +261,7 @@ describe('renderFinalSummary leaderboard', () => {
       ],
       10,
       '1234567890.123',
+      NO_AWARDS,
     )
 
     expect(leaderboardText(blocks).split('\n').slice(1)).toEqual([
@@ -275,15 +276,78 @@ describe('renderFinalSummary leaderboard', () => {
   })
 
   it('skips the tie-break note when nobody played', () => {
-    const blocks = renderFinalSummary([], 3, '1234567890.123')
+    const blocks = renderFinalSummary([], 3, '1234567890.123', NO_AWARDS)
     expect(leaderboardText(blocks)).toContain('No participants')
     expect(blocks.some((b) => b.type === 'context')).toBe(false)
   })
 })
 
+describe('renderFinalSummary awards', () => {
+  const awards: Awards = {
+    fastestWrong: Option.some({ userId: 'U-MARCUS', pick: 'Sydney', secs: 0.43 }),
+    slowestRight: Option.some({ userId: 'U-DANA', pick: 'Canberra', secs: 14.2 }),
+    herd: Option.some({ pick: 'Melbourne', count: 3 }),
+  }
+
+  const awardTexts = (blocks: AnyMessageBlock[]) => findBlocks(blocks, 'section').slice(2).map(blockText)
+
+  it('roasts each award after the leaderboard, before the recap button', () => {
+    const blocks = renderFinalSummary(
+      [{ userId: 'U-MARCUS', score: 0, speedBonus: 0, totalAnswered: 1 }],
+      1,
+      '1234567890.123',
+      awards,
+    )
+
+    const [fastest, slowest, herd] = awardTexts(blocks)
+
+    expect(fastest).toMatch(/^🏅 \*Fastest Wrong Answer\*\n/)
+    expect(fastest).toContain('<@U-MARCUS>')
+    expect(fastest).toContain('*Sydney*')
+    expect(fastest).toContain('0.4s')
+    expect(slowest).toMatch(/^🐢 \*Slowest Right Answer\*\n/)
+    expect(slowest).toContain('<@U-DANA>')
+    expect(slowest).toContain('*Canberra*')
+    expect(slowest).toContain('14.2s')
+    expect(herd).toMatch(/^🐑 \*Herd Mentality\*\n3 of you .*\*Melbourne\*/)
+    expect(blocks[blocks.length - 1].type).toBe('actions')
+  })
+
+  it('keeps the same lines for the same quiz', () => {
+    const render = () => awardTexts(renderFinalSummary([], 1, '1234567890.123', awards))
+
+    expect(render()).toEqual(render())
+  })
+
+  it('shows an instant answer as under a tenth of a second, escaped for mrkdwn', () => {
+    const blocks = renderFinalSummary([], 1, '1234567890.123', {
+      ...NO_AWARDS,
+      fastestWrong: Option.some({ userId: 'U-MARCUS', pick: 'Sydney', secs: 0 }),
+    })
+
+    const [fastest] = awardTexts(blocks)
+
+    expect(fastest).toContain('&lt;0.1s')
+    expect(fastest).not.toContain('0.0s')
+  })
+
+  it('leaves out awards nobody earned', () => {
+    const blocks = renderFinalSummary([], 1, '1234567890.123', {
+      ...NO_AWARDS,
+      slowestRight: awards.slowestRight,
+    })
+
+    const text = JSON.stringify(blocks)
+
+    expect(text).toContain('Slowest Right Answer')
+    expect(text).not.toContain('Fastest Wrong Answer')
+    expect(text).not.toContain('Herd Mentality')
+  })
+})
+
 describe('renderFinalSummary recap button', () => {
   it('includes a recap button carrying the quiz message ts', () => {
-    const blocks = renderFinalSummary([], 3, '1234567890.123')
+    const blocks = renderFinalSummary([], 3, '1234567890.123', NO_AWARDS)
     const actions = findBlock(blocks, 'actions')
 
     expect(actions.elements[0]).toMatchObject({

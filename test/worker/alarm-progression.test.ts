@@ -16,6 +16,7 @@ import {
   COUNTDOWN_ORIGIN,
   POST_MESSAGE_TS,
 } from './fixtures'
+import { NO_AWARDS } from '../test-utils'
 
 /**
  * Issue #9: the quiz runs itself to completion on Durable Object alarms.
@@ -178,7 +179,7 @@ describe('alarm-driven progression', () => {
 
     // The final summary is the existing renderer's output, Recap button and
     // all, carrying the timestamp of the message hosting the quiz.
-    expect(summary.blocks).toEqual(renderFinalSummary([], 2, POST_MESSAGE_TS))
+    expect(summary.blocks).toEqual(renderFinalSummary([], 2, POST_MESSAGE_TS, NO_AWARDS))
     expect(summary.text).toContain('completed')
     expect(recapButtonValue(summary.blocks)).toBe(POST_MESSAGE_TS)
 

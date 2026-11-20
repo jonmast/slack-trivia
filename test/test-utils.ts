@@ -6,7 +6,9 @@ import type {
   SectionBlock,
 } from 'slack-cloudflare-workers'
 import { Effect, Option } from 'effect'
-import type { QuestionSource, TriviaQuestion } from '../src/trivia-core'
+import type { Awards, QuestionSource, TriviaQuestion } from '../src/trivia-core'
+
+export const NO_AWARDS: Awards = { fastestWrong: Option.none(), slowestRight: Option.none(), herd: Option.none() }
 
 export const createMockTriviaQuestion = (overrides: Partial<TriviaQuestion> = {}): TriviaQuestion => ({
   id: 'test-1',

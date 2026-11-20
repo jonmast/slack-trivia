@@ -20,10 +20,10 @@ pnpm test
 
 - **node** (`test/*.test.ts`) — the pure modules shared by the Worker and the build script, in a plain Node environment:
   - `trivia-core.test.ts` — answers, shuffling, question construction, question timing helpers and the Trivia API question schema.
-  - `quiz-rules.test.ts` — `/quizzo` argument parsing and the `Quiz` answer/scoring rules.
+  - `quiz-rules.test.ts` — `/quizzo` argument parsing, the `Quiz` answer/scoring rules and who wins each award.
   - `multiplayer.test.ts` — several participants scoring in one quiz.
   - `quiz-snapshot.test.ts` — `Quiz` snapshot round-trips, the format the Durable Object stores.
-  - `recap.test.ts` — `Quiz.getRecap` plus the recap modal and final summary renderers.
+  - `recap.test.ts` — `Quiz.getRecap` plus the recap modal and final summary renderers, awards included.
   - `slack-ui.test.ts`, `channel-ui.test.ts` — the channel ready screen, question, results and summary blocks.
   - `countdown.test.ts` — the countdown GIF renderer and its URL helper, still used by `pnpm build:assets`.
   - `test-utils.ts` is shared helper code, not a test file.

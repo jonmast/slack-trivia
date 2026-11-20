@@ -1,5 +1,6 @@
+import { Option } from "effect"
 import type { AnyMessageBlock, AnyModalBlock, ModalView } from "slack-cloudflare-workers"
-import { Question, UserScore, RecapQuestion, RecapOption, compareRank } from "./trivia-core"
+import { Question, UserScore, RecapQuestion, RecapOption, AwardedAnswer, Awards, compareRank } from "./trivia-core"
 
 export const OPTION_TEXT_MAX = 75
 
@@ -226,7 +227,75 @@ export function renderChannelResults(
   ]
 }
 
-export function renderFinalSummary(userScores: UserScore[], totalQuestions: number, messageTs: string): AnyMessageBlock[] {
+type AnswerLine = (who: string, pick: string, secs: string) => string
+
+const FASTEST_WRONG_LINES: ReadonlyArray<AnswerLine> = [
+  (who, pick, secs) => `${who} picked *${pick}* in ${secs}. Confidently incorrect.`,
+  (who, pick, secs) => `${who} locked in *${pick}* after ${secs}. Bold. Wrong, but bold.`,
+  (who, pick, secs) => `${who} needed just ${secs} to pick *${pick}*. Thinking would've taken longer.`,
+  (who, pick, secs) => `${who} hit *${pick}* in ${secs}. Reading the question is for cowards.`,
+]
+
+const SLOWEST_RIGHT_LINES: ReadonlyArray<AnswerLine> = [
+  (who, pick, secs) => `${who} took ${secs} to land on *${pick}*. Correct, eventually.`,
+  (who, pick, secs) => `${who} got *${pick}* right after ${secs}. Worth the wait? Debatable.`,
+  (who, pick, secs) => `${who} needed ${secs} for *${pick}*. Phoned a friend, presumably.`,
+  (who, pick, secs) => `${who} arrived at *${pick}* after ${secs}. Slow and steady, mostly slow.`,
+]
+
+const HERD_LINES: ReadonlyArray<(count: number, pick: string) => string> = [
+  (count, pick) => `${count} of you picked *${pick}*. Groupthink at its finest.`,
+  (count, pick) => `${count} of you agreed on *${pick}*. Wrong together, which is nice.`,
+  (count, pick) => `${count} of you went with *${pick}*. Confidence in numbers, not in facts.`,
+  (count, pick) => `${count} of you chose *${pick}*. Somebody started a rumour.`,
+]
+
+/** One line per quiz, chosen from its message ts so a re-render never changes it. */
+function pickLine<Line>(lines: ReadonlyArray<Line>, messageTs: string): Line {
+  const seed = [...messageTs].reduce((sum, char) => sum + char.charCodeAt(0), 0)
+
+  return lines[seed % lines.length]
+}
+
+function answerAward(
+  title: string,
+  lines: ReadonlyArray<AnswerLine>,
+  award: Option.Option<AwardedAnswer>,
+  messageTs: string,
+): Option.Option<string> {
+  return Option.map(award, ({ userId, pick, secs }) => {
+    const line = pickLine(lines, messageTs)
+    // Slack's mrkdwn reads a bare `<` as the start of a link.
+    const took = secs < 0.1 ? "&lt;0.1s" : `${secs.toFixed(1)}s`
+
+    return `${title}\n${line(`<@${userId}>`, pick, took)}`
+  })
+}
+
+function renderAwards(awards: Awards, messageTs: string): AnyMessageBlock[] {
+  const herd = Option.map(
+    awards.herd,
+    ({ count, pick }) => `🐑 *Herd Mentality*\n${pickLine(HERD_LINES, messageTs)(count, pick)}`,
+  )
+
+  return [
+    answerAward("🏅 *Fastest Wrong Answer*", FASTEST_WRONG_LINES, awards.fastestWrong, messageTs),
+    answerAward("🐢 *Slowest Right Answer*", SLOWEST_RIGHT_LINES, awards.slowestRight, messageTs),
+    herd,
+  ].flatMap((award) =>
+    Option.match(award, {
+      onNone: (): AnyMessageBlock[] => [],
+      onSome: (text): AnyMessageBlock[] => [{ type: "section", text: { type: "mrkdwn", text } }],
+    }),
+  )
+}
+
+export function renderFinalSummary(
+  userScores: UserScore[],
+  totalQuestions: number,
+  messageTs: string,
+  awards: Awards,
+): AnyMessageBlock[] {
   const sortedScores = userScores.sort(compareRank)
 
   const leaderboard = sortedScores
@@ -261,6 +330,7 @@ export function renderFinalSummary(userScores: UserScore[], totalQuestions: numb
       },
     },
     ...tieBreakNote,
+    ...renderAwards(awards, messageTs),
     {
       type: "actions",
       elements: [

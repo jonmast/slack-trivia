@@ -7,10 +7,13 @@ import {
   QuestionNotFoundError,
   QuestionsExhaustedError,
   MAX_QUESTIONS,
+  FASTEST_WRONG_MAX_SECS,
+  HERD_MIN,
+  type Question,
   type QuestionSource,
 } from '../src/trivia-core'
 import { MAX_TIMEOUT_SECS } from '../src/timing'
-import { createQuestionSource, failureOf } from './test-utils'
+import { NO_AWARDS, createMockQuestions, createQuestionSource, failureOf } from './test-utils'
 
 describe('parseQuizzoArgs', () => {
   it('defaults to 3 questions / 5s', () => {
@@ -193,5 +196,98 @@ describe('Leaderboard ranking', () => {
     })
 
     expect(quiz.getLeaderboard().map((s) => s.userId)).toEqual(['fast', 'slow', 'wrong'])
+  })
+})
+
+describe('Quiz.getAwards', () => {
+  let quiz: Quiz
+
+  beforeEach(() => {
+    quiz = new Quiz(createQuestionSource(createMockQuestions(2)), 2, 10)
+  })
+
+  const after = (q: Question, ms: number) => new Date(q.timestamp.getTime() + ms)
+  const wrongAnswers = (q: Question) => q.answers.filter((a) => a.id !== q.correctAnswer.id)
+
+  const answerAll = (q: Question, userIds: string[], answerId: string) => {
+    for (const userId of userIds) {
+      Effect.runSync(quiz.submitAnswer(userId, answerId, after(q, 1_000), q.question.id))
+    }
+  }
+
+  it('gives nothing when nobody answered', () => {
+    Effect.runSync(quiz.startQuiz())
+
+    expect(quiz.getAwards()).toEqual(NO_AWARDS)
+  })
+
+  it('picks the quickest wrong and slowest right answers across every question', () => {
+    const q1 = Effect.runSync(quiz.startQuiz())
+    const [wrong1] = wrongAnswers(q1)
+    Effect.runSync(quiz.submitAnswer('u1', wrong1.id, after(q1, 1_500)))
+    Effect.runSync(quiz.submitAnswer('u2', q1.correctAnswer.id, after(q1, 100)))
+    Effect.runSync(quiz.submitAnswer('u5', q1.correctAnswer.id, after(q1, 6_000)))
+
+    const q2 = Effect.runSync(quiz.nextQuestion())
+    const [wrong2] = wrongAnswers(q2)
+    Effect.runSync(quiz.submitAnswer('u3', wrong2.id, after(q2, 400), q2.question.id))
+    Effect.runSync(quiz.submitAnswer('u4', q2.correctAnswer.id, after(q2, 14_200), q2.question.id))
+
+    const awards = quiz.getAwards()
+
+    expect(awards.fastestWrong).toEqual(Option.some({ userId: 'u3', pick: wrong2.text, secs: 0.4 }))
+    expect(awards.slowestRight).toEqual(
+      Option.some({ userId: 'u4', pick: q2.correctAnswer.text, secs: 14.2 }),
+    )
+  })
+
+  it('skips fastest wrong answer when no wrong answer was quick', () => {
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', wrongAnswers(q)[0].id, after(q, FASTEST_WRONG_MAX_SECS * 1000)))
+
+    expect(Option.isNone(quiz.getAwards().fastestWrong)).toBe(true)
+  })
+
+  it('skips slowest right answer when every right answer came in the first half of the window', () => {
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, after(q, 4_900)))
+
+    expect(Option.isNone(quiz.getAwards().slowestRight)).toBe(true)
+  })
+
+  it('counts a late right answer as the slowest', () => {
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', q.correctAnswer.id, after(q, 5_000)))
+    Effect.runSync(quiz.submitAnswer('u2', q.correctAnswer.id, after(q, 25_000)))
+
+    expect(Option.getOrThrow(quiz.getAwards().slowestRight)).toMatchObject({ userId: 'u2', secs: 25 })
+  })
+
+  it('counts an answer stamped before the question appeared as instant', () => {
+    const q = Effect.runSync(quiz.startQuiz())
+    Effect.runSync(quiz.submitAnswer('u1', wrongAnswers(q)[0].id, after(q, -50)))
+
+    expect(Option.getOrThrow(quiz.getAwards().fastestWrong).secs).toBe(0)
+  })
+
+  it('finds the wrong option most participants picked together on one question', () => {
+    const q1 = Effect.runSync(quiz.startQuiz())
+    answerAll(q1, ['u1', 'u2', 'u3'], wrongAnswers(q1)[0].id)
+
+    const q2 = Effect.runSync(quiz.nextQuestion())
+    const [herded] = wrongAnswers(q2)
+    answerAll(q2, ['u1', 'u2', 'u3', 'u4'], herded.id)
+
+    expect(quiz.getAwards().herd).toEqual(Option.some({ pick: herded.text, count: 4 }))
+  })
+
+  it(`needs at least ${HERD_MIN} participants on the same wrong option for a herd`, () => {
+    const q = Effect.runSync(quiz.startQuiz())
+    const [a, b] = wrongAnswers(q)
+    answerAll(q, ['u1', 'u2'], a.id)
+    answerAll(q, ['u3', 'u4'], b.id)
+    answerAll(q, ['u5', 'u6', 'u7'], q.correctAnswer.id)
+
+    expect(Option.isNone(quiz.getAwards().herd)).toBe(true)
   })
 })

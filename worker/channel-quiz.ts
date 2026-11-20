@@ -655,6 +655,7 @@ const complete = Effect.fn("complete")(
         quiz.getLeaderboard(),
         quiz.getMaxQuestions(),
         messageTs,
+        quiz.getAwards(),
       ),
       "🎉 Trivia quiz completed! Thanks for playing!",
     ).pipe(

@@ -39,6 +39,13 @@ _Avoid_: reveal, answer screen
 The screen that replaces the quiz message when the last question's results expire: the final leaderboard.
 _Avoid_: end screen, results
 
+**Award**:
+A joke on the final summary, each with a roast line that stays the same for that quiz, left out when nobody earned it:
+- **Fastest wrong answer**: the wrong answer given soonest after its question appeared, within two seconds, with who gave it, what they picked and how fast.
+- **Slowest right answer**: the correct answer given latest after its question appeared, once at least half the answer window had gone, late answers included.
+- **Herd mentality**: the wrong option the most participants picked together on one question, when at least three did. Names the option and the count, not the participants.
+_Avoid_: penalty, shame, achievement
+
 **Recap**:
 A participant's private, per-question account of a finished quiz: every option of every question, marked by whether they picked it and whether it was correct, with the points and speed bonus earned. Opened on demand from the final summary.
 _Avoid_: review, results, scorecard, answer sheet
